@@ -79,6 +79,9 @@ def plotMap(locs, theta, DSi, degMax=180, dsiMax=1, trial=-1):
 
     return tFig, dFig
 
+# create function for correlating activity between recs over the tree
+# create function for "line plots" of voltage along a rolled out section of dendrite
+
 if __name__ == '__main__':
     theta, DSi = calcTreeDS(VmTreeDF, threshVm)
     # print('theta:', theta)
