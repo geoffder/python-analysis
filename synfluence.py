@@ -22,7 +22,8 @@ locationsDF = pd.read_csv(dataPath+'treeRecLocations.csv')
 # ran at 10kHz, downsampled by factor of 10
 trials = VmTreeDF[0].columns.levels[0].values
 directions = VmTreeDF[0].columns.levels[1].values
-tsteps, nrecs = VmTreeDF[0].shape[0], locationsDF.shape[0]
+recInds = VmTreeDF[0].columns.levels[2].values
+tsteps, nrecs = VmTreeDF[0].shape[0], recInds.shape[0]
 numTrials, numDirs = len(trials), len(directions)
 print('num trials:', numTrials, ', directions:', directions)
 print('num recs:', nrecs, ', time steps:', tsteps)
@@ -36,8 +37,7 @@ def grabProxRecs(maxDist=50):
     each recording is on (bi-directional lineplot).
     '''
     distBetwRecs = pd.read_csv(dataPath+'distBetwRecs.csv')
-    proxDists = {}
-    proxLocs = {}
+    proxDists, proxLocs = {}, {}
     for dend in manipSynsDF['dendNum']:
         mid = str(int(dend*dendSegs + dendSegs/2))
         proxDists[dend] = distBetwRecs[mid][distBetwRecs[mid] < maxDist]
@@ -46,5 +46,21 @@ def grabProxRecs(maxDist=50):
     return proxDists, proxLocs
 
 
+def linePlots(proxDists, proxLocs, dir):
+    lineVmRecs = {c: {} for c in condition}
+    for dend in manipSynsDF['dendNum']:
+        for i, c in enumerate(condition):
+            lineVmRecs[c][dend] = VmTreeDF[i].drop(
+                columns=set(directions).difference([dir]),
+                level='direction'
+            ).drop(
+                columns=set(recInds).difference(proxDists[dend].index),
+                level='synapse'
+            )
+
+    return lineVmRecs
+
+
 if __name__ == '__main__':
     proxDists, proxLocs = grabProxRecs()
+    lineVmRecs = linePlots(proxDists, proxLocs, 180)
