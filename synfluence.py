@@ -5,7 +5,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.collections import PolyCollection
 
 # load data
-base = 'C:\\Users\\geoff\\NEURONoutput\\'
+base = 'D:\\NEURONoutput\\'
 folder = 'lockedSyn\\'
 dataPath = base + folder
 
@@ -65,21 +65,6 @@ def getDir(treeRecs, dists, dir):
             )
 
     return dirRecs
-
-
-def waterfall(ax, X, Y, Z):
-
-    verts = []
-    for i in range(X.shape[1]):
-        verts.append(list(zip(Y[:, i], Z[:, i])))
-
-    poly = PolyCollection(verts, facecolors='g', alpha=.3)
-    ax.add_collection3d(poly, zs=X[0], zdir='x')
-    ax.set_xlim(X.min(), X.max())
-    ax.set_ylim(Y.min(), Y.max())
-    ax.set_zlim(Z.min(), Z.max())
-
-    return ax
 
 
 def cableGridPlot(dirRecs, dists, locs,
@@ -158,8 +143,23 @@ def averageTrials(dirRecs):
     return avgRecs
 
 
+def waterfall(ax, X, Y, Z):
+
+    verts = []
+    for i in range(X.shape[1]):
+        verts.append(list(zip(Y[:, i], Z[:, i])))
+
+    poly = PolyCollection(verts, facecolors='g', alpha=.3)
+    ax.add_collection3d(poly, zs=X[0], zdir='x')
+    ax.set_xlim(X.min(), X.max())
+    ax.set_ylim(Y.min(), Y.max())
+    ax.set_zlim(Z.min(), Z.max())
+
+    return ax
+
+
 if __name__ == '__main__':
-    proxDists, proxLocs = grabProxRecs(maxDist=15)
+    proxDists, proxLocs = grabProxRecs(maxDist=5)
     dirVmRecs = getDir(VmTreeDF, proxDists, 0)
 
     cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs, trial='avg')
