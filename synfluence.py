@@ -6,30 +6,32 @@ from matplotlib.collections import PolyCollection
 
 # load data
 base = 'D:\\NEURONoutput\\'
-folder = 'lockedSyn\\'
+folder = 'lockedSyn_set1\\'
 dataPath = base + folder
 
 condition = ['None', 'E', 'I', 'EI']
 
-VmTreeDF, iCaTreeDF = [], []
+VmTreeDF, iCaTreeDF = {}, {}
 for c in condition:
-    VmTreeDF.append(pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'Vm'))
-    iCaTreeDF.append(pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'iCa'))
+    VmTreeDF[c] = pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'Vm')
+    iCaTreeDF[c] = pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'iCa')
 
 manipSynsDF = pd.read_csv(dataPath+'manipulatedSyns.csv')
 locationsDF = pd.read_csv(dataPath+'treeRecLocations.csv')
+synTimesDF = pd.read_hdf(dataPath+'baseSynTimes.h5', 'I')
+
 
 # data dimensions
 # keep in mind that these have likely been downsampled
 # ran at 10kHz, downsampled by factor of 10
-trials = VmTreeDF[0].columns.levels[0].values
-directions = VmTreeDF[0].columns.levels[1].values
-recInds = VmTreeDF[0].columns.levels[2].values
-tsteps, nrecs = VmTreeDF[0].shape[0], recInds.shape[0]
+trials = VmTreeDF['E'].columns.levels[0].values
+directions = VmTreeDF['E'].columns.levels[1].values
+recInds = VmTreeDF['E'].columns.levels[2].values
+tsteps, nrecs = VmTreeDF['E'].shape[0], recInds.shape[0]
 numTrials, numDirs = len(trials), len(directions)
 print('num trials:', numTrials, ', directions:', directions)
 print('num recs:', nrecs, ', time steps:', tsteps)
-dendSegs = int(VmTreeDF[0].columns.size/numTrials/numDirs/350)
+dendSegs = int(VmTreeDF['E'].columns.size/numTrials/numDirs/350)
 
 
 def grabProxRecs(maxDist=50):
@@ -41,7 +43,7 @@ def grabProxRecs(maxDist=50):
     distBetwRecs = pd.read_csv(dataPath+'distBetwRecs.csv')
     proxDists, proxLocs = {}, {}
     for dend in manipSynsDF['dendNum']:
-        mid = str(int(dend*dendSegs + dendSegs/2))
+        mid = str(int(dend*dendSegs + dendSegs/2))  # calc rec index of syn
         proxDists[dend] = distBetwRecs[mid][distBetwRecs[mid] < maxDist]
         proxLocs[dend] = locationsDF.loc[proxDists[dend].index.values]
 
@@ -55,21 +57,34 @@ def getDir(treeRecs, dists, dir):
     '''
     dirRecs = {c: {} for c in condition}
     for dend in manipSynsDF['dendNum']:
-        for i, c in enumerate(condition):
-            dirRecs[c][dend] = treeRecs[i].drop(
-                columns=set(directions).difference([dir]),
-                level='direction'
-            ).drop(
-                columns=set(recInds).difference(dists[dend].index),
-                level='synapse'
-            )
+        for c in condition:
+            cols = [(tr, dir, rec) for tr in range(numTrials)
+                    for rec in dists[dend].index.values]
+            dirRecs[c][dend] = treeRecs[c].loc[:, cols]
+    return dirRecs
 
+
+def timeSlice(dirRecs, dir, lead=3, trail=5):
+    '''
+    Return slice in time with a given number of timesteps (dur) in leading and
+    trailing time around when the locked synapses have their event. This is
+    at the time when the bar passes over them, taking offset into account,
+    since timing jitter is turned off for these synapses.
+    '''
+    for s, d in manipSynsDF.values:
+        start = int(synTimesDF[dir][s] - lead)
+        stop = int(synTimesDF[dir][s] + trail)
+        for c in condition:
+            dirRecs[c][d] = dirRecs[c][d].loc[start:stop, :]
     return dirRecs
 
 
 def cableGridPlot(dirRecs, dists, locs,
                   trial='avg', type='surface', plot=False):
-
+    '''
+    Grid of plots [surface(3D), waterfall(3D) or heatmap(2D)] for all
+    conditions of each locked synapse/dendrite.
+    '''
     fig = plt.figure(figsize=(19, 9))
     axes = [
         list(range(len(condition)))
@@ -79,9 +94,11 @@ def cableGridPlot(dirRecs, dists, locs,
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
 
     for i, dend in enumerate(manipSynsDF['dendNum'].values):
-        timeAx = np.array(
-                    [np.arange(tsteps) for _ in range(dists[dend].shape[0])]).T
-        distAx = np.array([dists[dend].values for _ in range(tsteps)])
+        timeAx = np.array([dirRecs['E'][dend].index.values
+                          for _ in range(dists[dend].shape[0])]).T
+        distAx = np.array(
+            [dists[dend].values for _ in range(len(dirRecs['E'][dend].index))])
+
         for j, cond in enumerate(condition):
             if trial != 'avg':
                 vals = dirRecs[cond][dend][trial].values
@@ -90,8 +107,8 @@ def cableGridPlot(dirRecs, dists, locs,
 
             if type == 'surface':
                 axes[i][j] = fig.add_subplot(
-                                len(condition),  # number rows
-                                manipSynsDF['dendNum'].shape[0],  # number cols
+                                len(condition),  # number cols
+                                manipSynsDF['dendNum'].shape[0],  # number rows
                                 int(i*len(condition)+j+1),  # position
                                 projection='3d'
                             )
@@ -99,16 +116,16 @@ def cableGridPlot(dirRecs, dists, locs,
                                         cstride=1, cmap=plt.cm.coolwarm)
             elif type == 'heat':
                 axes[i][j] = fig.add_subplot(
-                                len(condition),  # number rows
-                                manipSynsDF['dendNum'].shape[0],  # number cols
+                                len(condition),  # number cols
+                                manipSynsDF['dendNum'].shape[0],  # number rows
                                 int(i*len(condition)+j+1)  # position
                             )
                 X, Y = np.meshgrid(dists[dend].values, np.arange(tsteps))
                 axes[i][j].pcolormesh(X, Y, vals, cmap=plt.cm.coolwarm)
             elif type == 'water':
                 axes[i][j] = fig.add_subplot(
-                                len(condition),  # number rows
-                                manipSynsDF['dendNum'].shape[0],  # number cols
+                                len(condition),  # number cols
+                                manipSynsDF['dendNum'].shape[0],  # number rows
                                 int(i*len(condition)+j+1),  # position
                                 projection='3d'
                             )
@@ -131,7 +148,54 @@ def cableGridPlot(dirRecs, dists, locs,
     return fig
 
 
+def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True):
+    '''
+    1-Dimensional 'line' plots over cable distance that have been collapsed
+    over time. Means over the time axis are taken of dataframes that have
+    already been sliced around the bar stimulation time by timeSlice().
+    '''
+    condition = ['E', 'I']  # try only displaying E and I conditions
+    fig = plt.figure()
+    axes = [[] for _ in range(manipSynsDF['dendNum'].shape[0])]
+
+    dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
+    cable = {c: {dend: [] for dend in manipSynsDF['dendNum'].values}
+             for c in condition}
+
+    for i, dend in enumerate(manipSynsDF['dendNum'].values):
+        axes[i] = fig.add_subplot(
+                        1,  # number cols
+                        manipSynsDF['dendNum'].shape[0],  # number rows
+                        int(i+1),  # position
+                    )
+        for j, cond in enumerate(condition):
+            cable[cond][dend] = dirRecs[cond][dend].mean(axis=0)
+            ord = np.argsort(dists[dend].values)
+            if trial != 'avg':
+                vals = cable[cond][dend][trial].values
+            else:
+                vals = cable[cond][dend].values
+
+            axes[i].plot(dists[dend].values[ord], vals[ord],
+                         marker='o', alpha=.5, label=cond)
+            axes[i].set_title('dend: ' + str(dend))
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center')
+    fig.tight_layout()
+
+    if plot:
+        plt.show()
+
+    return fig
+
+
 def averageTrials(dirRecs):
+    '''
+    Return an average over trials for all recordings. Takes in dict that is
+    already broken into proximal recordings around certain dendrites for each
+    condition (only one direction).
+    '''
     avgRecs = {c: {dend: [] for dend in manipSynsDF['dendNum'].values}
                for c in condition}
     for dend in manipSynsDF['dendNum'].values:
@@ -144,7 +208,10 @@ def averageTrials(dirRecs):
 
 
 def waterfall(ax, X, Y, Z):
-
+    '''
+    Simple 3D waterfall plot of timeseries data. Position on X, time going in
+    to the plot on Y, value on Z.
+    '''
     verts = []
     for i in range(X.shape[1]):
         verts.append(list(zip(Y[:, i], Z[:, i])))
@@ -158,16 +225,45 @@ def waterfall(ax, X, Y, Z):
     return ax
 
 
-if __name__ == '__main__':
-    proxDists, proxLocs = grabProxRecs(maxDist=5)
-    dirVmRecs = getDir(VmTreeDF, proxDists, 0)
+def locDists(dists, locs):
+    '''
+    Visualize the locations of proximal (according to cable distance) recording
+    sites relative to each locked synapse/dendrite.
+    '''
+    fig = plt.figure()
+    axes = [[] for _ in range(manipSynsDF['dendNum'].shape[0])]
 
-    cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs, trial='avg')
-    cableFig3D.savefig(dataPath+'cableGrid_surface.png')
+    for i, dend in enumerate(manipSynsDF['dendNum'].values):
+        mid = int(dend*dendSegs + dendSegs/2)  # idx of targer syn
+        axes[i] = fig.add_subplot(
+                        1,  # number cols
+                        manipSynsDF['dendNum'].shape[0],  # number rows
+                        int(i+1),  # position
+                    )
+        axes[i].scatter(locs[dend]['X'], locs[dend]['Y'], marker='o', alpha=.5)
+        axes[i].scatter(locs[dend]['X'][mid], locs[dend]['Y'][mid],
+                        marker='x', alpha=1, s=100)
+        axes[i].set_title('dend: ' + str(dend))
+
+    fig.tight_layout()
+    plt.show()
+
+
+if __name__ == '__main__':
+    proxDists, proxLocs = grabProxRecs(maxDist=20)
+    dirVmRecs = getDir(VmTreeDF, proxDists, 180)
+    dirVmRecs = timeSlice(dirVmRecs, 180, lead=10, trail=10)
+    # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs, trial=0)
+    # cableFig3D.savefig(dataPath+'cableGrid_surface.png')
 
     # cableFig = cableGridPlot(dirVmRecs, proxDists, proxLocs, type='heat')
     # cableFig.savefig(dataPath+'cableGrid_heatmap.png')
 
-    cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs,
-                               trial='avg', type='water')
-    cableFig3D.savefig(dataPath+'cableGrid_waterfall.png')
+    # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs,
+    #                            trial='avg', type='water')
+    # cableFig3D.savefig(dataPath+'cableGrid_waterfall.png')
+
+    # cableFig1D = cableLinePlot(dirVmRecs, proxDists, proxLocs, trial='avg')
+    # cableFig1D.savefig(dataPath+'cableLine.png')
+
+    locDists(proxDists, proxLocs)
