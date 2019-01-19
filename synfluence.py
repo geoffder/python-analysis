@@ -6,7 +6,7 @@ from matplotlib.collections import PolyCollection
 
 # load data
 base = 'D:\\NEURONoutput\\'
-folder = 'lockedSyn_set1\\'
+folder = 'lockedSyn_bigSet3\\'
 dataPath = base + folder
 
 condition = ['None', 'E', 'I', 'EI']
@@ -71,9 +71,10 @@ def timeSlice(dirRecs, dir, lead=3, trail=5):
     at the time when the bar passes over them, taking offset into account,
     since timing jitter is turned off for these synapses.
     '''
+    delay = 10  # synapse activation delay (still 10, see NetCons)
     for s, d in manipSynsDF.values:
-        start = int(synTimesDF[dir][s] - lead)
-        stop = int(synTimesDF[dir][s] + trail)
+        start = int(synTimesDF[dir][s]+delay - lead)
+        stop = int(synTimesDF[dir][s]+delay + trail)
         for c in condition:
             dirRecs[c][d] = dirRecs[c][d].loc[start:stop, :]
     return dirRecs
@@ -148,46 +149,74 @@ def cableGridPlot(dirRecs, dists, locs,
     return fig
 
 
-def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True):
+def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True,
+                  conds=['None', 'E', 'I', 'EI']):
     '''
     1-Dimensional 'line' plots over cable distance that have been collapsed
     over time. Means over the time axis are taken of dataframes that have
     already been sliced around the bar stimulation time by timeSlice().
     '''
-    condition = ['E', 'I']  # try only displaying E and I conditions
-    fig = plt.figure()
-    axes = [[] for _ in range(manipSynsDF['dendNum'].shape[0])]
+    fig1 = plt.figure()
+    axes1 = [[] for _ in range(manipSynsDF['dendNum'].shape[0])]
 
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
     cable = {c: {dend: [] for dend in manipSynsDF['dendNum'].values}
              for c in condition}
 
     for i, dend in enumerate(manipSynsDF['dendNum'].values):
-        axes[i] = fig.add_subplot(
+        axes1[i] = fig1.add_subplot(
                         1,  # number cols
                         manipSynsDF['dendNum'].shape[0],  # number rows
                         int(i+1),  # position
                     )
-        for j, cond in enumerate(condition):
+        ord = np.argsort(dists[dend].values)
+        for j, cond in enumerate(conds):
             cable[cond][dend] = dirRecs[cond][dend].mean(axis=0)
-            ord = np.argsort(dists[dend].values)
+
             if trial != 'avg':
                 vals = cable[cond][dend][trial].values
             else:
                 vals = cable[cond][dend].values
 
-            axes[i].plot(dists[dend].values[ord], vals[ord],
-                         marker='o', alpha=.5, label=cond)
-            axes[i].set_title('dend: ' + str(dend))
+            axes1[i].plot(dists[dend].values[ord], vals[ord],
+                          marker='o', alpha=.5, label=cond)
+            axes1[i].set_title('dend: ' + str(dend))
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center')
-    fig.tight_layout()
+    handles, labels = axes1[0].get_legend_handles_labels()
+    fig1.legend(handles, labels, loc='upper center')
+    fig1.tight_layout()
+
+    if len(conds) == 2:
+        fig2 = plt.figure()
+        axes2 = [[] for _ in range(manipSynsDF['dendNum'].shape[0])]
+
+        for i, dend in enumerate(manipSynsDF['dendNum'].values):
+            axes2[i] = fig2.add_subplot(
+                            1,  # number cols
+                            manipSynsDF['dendNum'].shape[0],  # number rows
+                            int(i+1),  # position
+                        )
+            ord = np.argsort(dists[dend].values)
+            if trial != 'avg':
+                vals1 = cable[conds[0]][dend][trial].values
+                vals2 = cable[conds[1]][dend][trial].values
+            else:
+                vals1 = cable[conds[0]][dend].values
+                vals2 = cable[conds[1]][dend].values
+            diff = np.abs(vals1 - vals2)
+
+            axes2[i].plot(dists[dend].values[ord], diff[ord],
+                          marker='o', alpha=.5)
+            axes2[i].set_title('dend: ' + str(dend))
+
+        # fig2.tight_layout()
+    else:
+        fig2 = None
 
     if plot:
         plt.show()
 
-    return fig
+    return fig1, fig2
 
 
 def averageTrials(dirRecs):
@@ -250,9 +279,10 @@ def locDists(dists, locs):
 
 
 if __name__ == '__main__':
-    proxDists, proxLocs = grabProxRecs(maxDist=20)
-    dirVmRecs = getDir(VmTreeDF, proxDists, 180)
-    dirVmRecs = timeSlice(dirVmRecs, 180, lead=10, trail=10)
+    proxDists, proxLocs = grabProxRecs(maxDist=50)
+    dirVmRecs = getDir(VmTreeDF, proxDists, 0)
+    dirVmRecs = timeSlice(dirVmRecs, 0, lead=3, trail=15)
+
     # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs, trial=0)
     # cableFig3D.savefig(dataPath+'cableGrid_surface.png')
 
@@ -263,7 +293,10 @@ if __name__ == '__main__':
     #                            trial='avg', type='water')
     # cableFig3D.savefig(dataPath+'cableGrid_waterfall.png')
 
-    # cableFig1D = cableLinePlot(dirVmRecs, proxDists, proxLocs, trial='avg')
-    # cableFig1D.savefig(dataPath+'cableLine.png')
+    cableLine, cableDiff = cableLinePlot(
+                            dirVmRecs, proxDists, proxLocs, trial='avg',
+                            conds=['E', 'I'])
+    cableLine.savefig(dataPath+'cableLine.png')
+    cableDiff.savefig(dataPath+'cableDiff.png')
 
-    locDists(proxDists, proxLocs)
+    # locDists(proxDists, proxLocs)
