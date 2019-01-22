@@ -119,7 +119,7 @@ def binSpace(dirRecs, dists, bin_sz=1, trial='avg'):
 
 
 def cableGridPlot(dirRecs, dists, locs,
-                  trial='avg', type='surface', plot=False):
+                  trial='avg', type='surface', plot=False, bin=False):
     '''
     Grid of plots [surface(3D), waterfall(3D) or heatmap(2D)] for all
     conditions of each locked synapse/dendrite.
@@ -131,21 +131,28 @@ def cableGridPlot(dirRecs, dists, locs,
     ]
 
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
+    dirRecs = binSpace(dirRecs, dists,
+                       bin_sz=1, trial=trial) if bin else dirRecs
 
     for i, (syn, dend) in enumerate(manipSynsDF.values):
-        ord = np.argsort(dists[dend].values)  # ensure distance is ascending
-        timeAx = np.array([dirRecs['E'][dend].index.values
-                          for _ in range(dists[dend].shape[0])]).T
-        distAx = np.array(
-            [dists[dend].values[ord]
-                for _ in range(len(dirRecs['E'][dend].index))]
-        )
         mid = int(dend*dendSegs + dendSegs/2)  # index for seg
         for j, cond in enumerate(condition):
-            if trial != 'avg':
-                vals = dirRecs[cond][dend][trial].values[:, ord]
+            if not bin:
+                if trial != 'avg':
+                    vals = dirRecs[cond][dend][trial].values
+                else:
+                    vals = dirRecs[cond][dend].values
+                dendDists = dists[dend].values
             else:
-                vals = dirRecs[cond][dend].values[:, ord]  # sort by distance
+                vals = dirRecs[cond][dend].values
+                dendDists = dirRecs[cond][dend].columns.values
+            ord = np.argsort(dendDists)  # to ensure distance is ascending
+
+            timeAx = np.array([dirRecs['E'][dend].index.values
+                              for _ in dendDists]).T
+            distAx = np.array(
+                [dendDists[ord] for _ in dirRecs['E'][dend].index])
+
             if type == 'surface':
                 axes[i][j] = fig.add_subplot(
                                 len(condition),  # number cols
@@ -154,7 +161,7 @@ def cableGridPlot(dirRecs, dists, locs,
                                 projection='3d'
                             )
                 axes[i][j].plot_surface(
-                    distAx, timeAx, vals, rstride=1,
+                    distAx, timeAx, vals[:, ord], rstride=1,
                     cstride=1, cmap=plt.cm.coolwarm
                 )
             elif type == 'heat':
@@ -163,8 +170,8 @@ def cableGridPlot(dirRecs, dists, locs,
                                 manipSynsDF['dendNum'].shape[0],  # number rows
                                 int(i*len(condition)+j+1)  # position
                             )
-                X, Y = np.meshgrid(dists[dend].values, np.arange(tsteps))
-                axes[i][j].pcolormesh(X, Y, vals, cmap=plt.cm.coolwarm)
+                X, Y = np.meshgrid(dendDists, np.arange(tsteps))
+                axes[i][j].pcolormesh(X, Y, vals[:, ord], cmap=plt.cm.coolwarm)
             elif type == 'water':
                 axes[i][j] = fig.add_subplot(
                                 len(condition),  # number cols
@@ -172,7 +179,8 @@ def cableGridPlot(dirRecs, dists, locs,
                                 int(i*len(condition)+j+1),  # position
                                 projection='3d'
                             )
-                axes[i][j] = waterfall(axes[i][j], distAx, timeAx, vals)
+                axes[i][j] = waterfall(axes[i][j], distAx, timeAx,
+                                       vals[:, ord])
 
             axes[i][j].set_title(
                 'syn %d\ndend %d\nXY(%d, %d)'
@@ -259,7 +267,7 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
             if not i:
                 axes2[i].set_ylabel(
                     'difference (%s - %s)' % (conds[0], conds[1]))
-            ord = np.argsort(dists[dend].values)
+            # ord = np.argsort(dists[dend].values)
             mid = int(dend*dendSegs + dendSegs/2)  # index for seg
             if not bin:
                 if trial != 'avg':
@@ -361,7 +369,8 @@ if __name__ == '__main__':
     dirVmRecs = timeSlice(dirVmRecs, 0, lead=3, trail=15)
 
     # surface plot
-    # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs, trial='avg')
+    # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs,
+    #                            trial='avg', bin=True)
     # cableFig3D.savefig(dataPath+'cableGrid_surface.png')
 
     # heat map
