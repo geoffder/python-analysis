@@ -81,7 +81,7 @@ def timeSlice(dirRecs, dir, lead=3, trail=5):
     return dirRecs
 
 
-def binSpace(dirRecs, dists, bin_sz=1, trial='avg'):
+def binSpace(dirRecs, dists, locs, bin_sz=1, trial='avg', split=False):
     '''
     Bin recordings by distance from their target dendritic site. This way the
     duplicate recordings from each section registered as the same distance are
@@ -92,7 +92,12 @@ def binSpace(dirRecs, dists, bin_sz=1, trial='avg'):
                for c in condition}
     binDists = {dend: [] for dend in manipSynsDF['dendNum'].values}
     for d in manipSynsDF['dendNum'].values:
-        nBins = int(dists[d].values.max() / bin_sz)
+        mid = int(d*dendSegs + dendSegs/2)
+        if split:
+            sign = np.sign(locs[d]['Y'].values - locs[d]['Y'][mid])
+            dists[d] = dists[d] * sign
+        maxDist, minDist = dists[d].values.max(), dists[d].values.min()
+        nBins = int((maxDist - minDist) / bin_sz)
         for j, c in enumerate(condition):
             binRecs[c][d] = []
             # pre-select trial to allow boolean array indexing
@@ -103,23 +108,23 @@ def binSpace(dirRecs, dists, bin_sz=1, trial='avg'):
                 recs = dirRecs[c][d]
             for i in range(nBins):
                 # get indices where distance is within the bins nounds
-                low = dists[d].values < (i*bin_sz + bin_sz)
-                high = dists[d].values >= i*bin_sz
+                low = dists[d].values < (minDist + i*bin_sz + bin_sz)
+                high = dists[d].values >= (minDist + i*bin_sz)
                 inds = low*high  # want inds that are true for both
                 if inds.any() or 0:
                     binRecs[c][d].append(
                         recs.loc[:, inds].mean(axis=1)
                     )
                     if not j:
-                        binDists[d].append(i*bin_sz)
+                        binDists[d].append(minDist + i*bin_sz)
             binRecs[c][d] = pd.DataFrame(np.array(binRecs[c][d]).T,
                                          columns=binDists[d])
 
     return binRecs
 
 
-def cableGridPlot(dirRecs, dists, locs,
-                  trial='avg', type='surface', plot=False, bin=False):
+def cableGridPlot(dirRecs, dists, locs, trial='avg', type='surface',
+                  split=False, plot=False, bin=False):
     '''
     Grid of plots [surface(3D), waterfall(3D) or heatmap(2D)] for all
     conditions of each locked synapse/dendrite.
@@ -131,8 +136,8 @@ def cableGridPlot(dirRecs, dists, locs,
     ]
 
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
-    dirRecs = binSpace(dirRecs, dists,
-                       bin_sz=1, trial=trial) if bin else dirRecs
+    dirRecs = binSpace(dirRecs, dists, locs,
+                       split=split, bin_sz=1, trial=trial) if bin else dirRecs
 
     for i, (syn, dend) in enumerate(manipSynsDF.values):
         mid = int(dend*dendSegs + dendSegs/2)  # index for seg
@@ -170,7 +175,7 @@ def cableGridPlot(dirRecs, dists, locs,
                                 manipSynsDF['dendNum'].shape[0],  # number rows
                                 int(i*len(condition)+j+1)  # position
                             )
-                X, Y = np.meshgrid(dendDists, np.arange(tsteps))
+                X, Y = np.meshgrid(dendDists, timeAx[:, 0])
                 axes[i][j].pcolormesh(X, Y, vals[:, ord], cmap=plt.cm.coolwarm)
             elif type == 'water':
                 axes[i][j] = fig.add_subplot(
@@ -203,7 +208,7 @@ def cableGridPlot(dirRecs, dists, locs,
 
 
 def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
-                  conds=['None', 'E', 'I', 'EI']):
+                  split=False, conds=['None', 'E', 'I', 'EI']):
     '''
     1-Dimensional 'line' plots over cable distance that have been collapsed
     over time. Means over the time axis are taken of dataframes that have
@@ -214,8 +219,8 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
 
     # averaging and binning of recordings
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
-    dirRecs = binSpace(dirRecs, dists,
-                       bin_sz=1, trial=trial) if bin else dirRecs
+    dirRecs = binSpace(dirRecs, dists, locs,
+                       split=split, bin_sz=1, trial=trial) if bin else dirRecs
 
     cable = {c: {dend: [] for dend in manipSynsDF['dendNum'].values}
              for c in condition}
@@ -228,6 +233,7 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
                         xlabel='distance',
                     )
         mid = int(dend*dendSegs + dendSegs/2)  # index for seg
+        sign = np.sign(locs[dend]['Y'].values - locs[dend]['Y'][mid])
         for j, cond in enumerate(conds):
             cable[cond][dend] = dirRecs[cond][dend].mean(axis=0)
 
@@ -240,6 +246,10 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
             else:
                 vals = cable[cond][dend].values
                 dendDists = dirRecs[cond][dend].columns.values
+
+            if split and not bin:  # already done in bin function
+                dendDists = dendDists[:] * sign
+
             ord = np.argsort(dendDists)
 
             axes1[i].plot(dendDists[ord], vals[ord],
@@ -269,6 +279,7 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
                     'difference (%s - %s)' % (conds[0], conds[1]))
             # ord = np.argsort(dists[dend].values)
             mid = int(dend*dendSegs + dendSegs/2)  # index for seg
+            sign = np.sign(locs[dend]['Y'].values - locs[dend]['Y'][mid])
             if not bin:
                 if trial != 'avg':
                     vals1 = cable[conds[0]][dend][trial].values
@@ -281,6 +292,10 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
                 vals1 = cable[conds[0]][dend].values
                 vals2 = cable[conds[1]][dend].values
                 dendDists = dirRecs[cond][dend].columns.values
+
+            if split and not bin:  # already done in bin function
+                dendDists = dendDists[:] * sign
+
             ord = np.argsort(dendDists)
             diff = np.abs(vals1 - vals2)
 
@@ -361,12 +376,13 @@ def locDists(dists, locs):
 
     fig.tight_layout(pad=0)
     plt.show()
+    return fig
 
 
 if __name__ == '__main__':
-    proxDists, proxLocs = grabProxRecs(maxDist=50)
+    proxDists, proxLocs = grabProxRecs(maxDist=100)
     dirVmRecs = getDir(VmTreeDF, proxDists, 0)
-    dirVmRecs = timeSlice(dirVmRecs, 0, lead=3, trail=15)
+    dirVmRecs = timeSlice(dirVmRecs, 0, lead=5, trail=10)
 
     # surface plot
     # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs,
@@ -374,19 +390,21 @@ if __name__ == '__main__':
     # cableFig3D.savefig(dataPath+'cableGrid_surface.png')
 
     # heat map
-    # cableFig = cableGridPlot(dirVmRecs, proxDists, proxLocs, type='heat')
+    # cableFig = cableGridPlot(dirVmRecs, proxDists, proxLocs, type='heat',
+    #                          trial='avg', bin=True)
     # cableFig.savefig(dataPath+'cableGrid_heatmap.png')
 
     # waterfall
     # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs,
-    #                            trial='avg', type='water')
+    #                            trial='avg', type='water', bin=True)
     # cableFig3D.savefig(dataPath+'cableGrid_waterfall.png')
 
     # cable line-plot
     cableLine, cableDiff = cableLinePlot(
                             dirVmRecs, proxDists, proxLocs, trial='avg',
-                            conds=['E', 'I'], bin=True)
+                            conds=['E', 'I'], bin=True, split=True)
     cableLine.savefig(dataPath+'cableLine.png')
     cableDiff.savefig(dataPath+'cableDiff.png')
 
-    # locDists(proxDists, proxLocs)
+    # locPlot = locDists(proxDists, proxLocs)
+    # locPlot.savefig(dataPath+'locPlot.png')
