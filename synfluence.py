@@ -6,7 +6,7 @@ from matplotlib.collections import PolyCollection
 
 # load data
 base = 'D:\\NEURONoutput\\'
-folder = 'lockedSyn_bigSet3\\'
+folder = 'lockedSyn_bigSet3_1seg\\'
 dataPath = base + folder
 
 condition = ['None', 'E', 'I', 'EI']
@@ -14,7 +14,7 @@ condition = ['None', 'E', 'I', 'EI']
 VmTreeDF, iCaTreeDF = {}, {}
 for c in condition:
     VmTreeDF[c] = pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'Vm')
-    iCaTreeDF[c] = pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'iCa')
+    # iCaTreeDF[c] = pd.read_hdf(dataPath+c+'\\treeRecData.h5', 'iCa')
 
 manipSynsDF = pd.read_csv(dataPath+'manipulatedSyns.csv')
 locationsDF = pd.read_csv(dataPath+'treeRecLocations.csv')
@@ -95,8 +95,10 @@ def binSpace(dirRecs, dists, locs, bin_sz=1, trial='avg', split=False):
         mid = int(d*dendSegs + dendSegs/2)
         if split:
             sign = np.sign(locs[d]['Y'].values - locs[d]['Y'][mid])
-            dists[d] = dists[d] * sign
-        maxDist, minDist = dists[d].values.max(), dists[d].values.min()
+            dendDists = dists[d] * sign
+        else:
+            dendDists = dists[d]
+        maxDist, minDist = dendDists.values.max(), dendDists.values.min()
         nBins = int((maxDist - minDist) / bin_sz)
         for j, c in enumerate(condition):
             binRecs[c][d] = []
@@ -108,8 +110,8 @@ def binSpace(dirRecs, dists, locs, bin_sz=1, trial='avg', split=False):
                 recs = dirRecs[c][d]
             for i in range(nBins):
                 # get indices where distance is within the bins nounds
-                low = dists[d].values < (minDist + i*bin_sz + bin_sz)
-                high = dists[d].values >= (minDist + i*bin_sz)
+                low = dendDists.values < (minDist + i*bin_sz + bin_sz)
+                high = dendDists.values >= (minDist + i*bin_sz)
                 inds = low*high  # want inds that are true for both
                 if inds.any() or 0:
                     binRecs[c][d].append(
@@ -208,7 +210,7 @@ def cableGridPlot(dirRecs, dists, locs, trial='avg', type='surface',
 
 
 def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
-                  split=False, conds=['None', 'E', 'I', 'EI']):
+                  bin_sz=1, split=False, conds=['None', 'E', 'I', 'EI']):
     '''
     1-Dimensional 'line' plots over cable distance that have been collapsed
     over time. Means over the time axis are taken of dataframes that have
@@ -219,8 +221,8 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
 
     # averaging and binning of recordings
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
-    dirRecs = binSpace(dirRecs, dists, locs,
-                       split=split, bin_sz=1, trial=trial) if bin else dirRecs
+    dirRecs = binSpace(dirRecs, dists, locs, split=split, bin_sz=bin_sz,
+                       trial=trial) if bin else dirRecs
 
     cable = {c: {dend: [] for dend in manipSynsDF['dendNum'].values}
              for c in condition}
@@ -379,10 +381,29 @@ def locDists(dists, locs):
     return fig
 
 
+def dirLoop(trial='avg', maxDist=100, lead=5, trail=10, conds=['E', 'I'],
+            bin_sz=1, bin=True, split=True, plot=False):
+    '''
+    Save figures for all directions with the same set of parameters. Files
+    stored with the suffix _d(direction) e.g. 'cableLine_d180.png'
+    '''
+    proxDists, proxLocs = grabProxRecs(maxDist=maxDist)
+    for d in directions:
+        dirVmRecs = getDir(VmTreeDF, proxDists, d)
+        dirVmRecs = timeSlice(dirVmRecs, d, lead=lead, trail=trail)
+        cableLine, cableDiff = cableLinePlot(
+                                dirVmRecs, proxDists, proxLocs, trial='avg',
+                                conds=conds, bin=bin, split=split, plot=plot,
+                                bin_sz=bin_sz)
+        cableLine.savefig(dataPath+'cableLine_d%d.png' % d)
+        cableDiff.savefig(dataPath+'cableDiff_d%d.png' % d)
+        plt.close('all')  # close figure instances
+
+
 if __name__ == '__main__':
-    proxDists, proxLocs = grabProxRecs(maxDist=100)
-    dirVmRecs = getDir(VmTreeDF, proxDists, 0)
-    dirVmRecs = timeSlice(dirVmRecs, 0, lead=5, trail=10)
+    # proxDists, proxLocs = grabProxRecs(maxDist=100)
+    # dirVmRecs = getDir(VmTreeDF, proxDists, 0)
+    # dirVmRecs = timeSlice(dirVmRecs, 0, lead=5, trail=10)
 
     # surface plot
     # cableFig3D = cableGridPlot(dirVmRecs, proxDists, proxLocs,
@@ -400,11 +421,14 @@ if __name__ == '__main__':
     # cableFig3D.savefig(dataPath+'cableGrid_waterfall.png')
 
     # cable line-plot
-    cableLine, cableDiff = cableLinePlot(
-                            dirVmRecs, proxDists, proxLocs, trial='avg',
-                            conds=['E', 'I'], bin=True, split=True)
-    cableLine.savefig(dataPath+'cableLine.png')
-    cableDiff.savefig(dataPath+'cableDiff.png')
+    # cableLine, cableDiff = cableLinePlot(
+    #                         dirVmRecs, proxDists, proxLocs, trial='avg',
+    #                         conds=['E', 'I'], bin=True, split=True)
+    # cableLine.savefig(dataPath+'cableLine.png')
+    # cableDiff.savefig(dataPath+'cableDiff.png')
 
     # locPlot = locDists(proxDists, proxLocs)
     # locPlot.savefig(dataPath+'locPlot.png')
+
+    dirLoop(trial='avg', maxDist=100, lead=1, trail=5, conds=['None', 'I'],
+            bin=True, split=True, plot=False, bin_sz=1)
