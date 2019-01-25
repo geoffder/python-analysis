@@ -6,7 +6,7 @@ from matplotlib.collections import PolyCollection
 
 # load data
 base = 'D:\\NEURONoutput\\'
-folder = 'lockedSyn_bigSet3_1seg\\'
+folder = 'lockedSyn_bigSet3_10seg_bigInh\\'
 dataPath = base + folder
 
 condition = ['None', 'E', 'I', 'EI']
@@ -223,7 +223,6 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
     dirRecs = averageTrials(dirRecs) if trial == 'avg' else dirRecs
     dirRecs = binSpace(dirRecs, dists, locs, split=split, bin_sz=bin_sz,
                        trial=trial) if bin else dirRecs
-
     cable = {c: {dend: [] for dend in manipSynsDF['dendNum'].values}
              for c in condition}
 
@@ -238,7 +237,6 @@ def cableLinePlot(dirRecs, dists, locs, trial='avg', plot=True, bin=False,
         sign = np.sign(locs[dend]['Y'].values - locs[dend]['Y'][mid])
         for j, cond in enumerate(conds):
             cable[cond][dend] = dirRecs[cond][dend].mean(axis=0)
-
             if not bin:
                 if trial != 'avg':
                     vals = cable[cond][dend][trial].values
@@ -431,4 +429,8 @@ if __name__ == '__main__':
     # locPlot.savefig(dataPath+'locPlot.png')
 
     dirLoop(trial='avg', maxDist=100, lead=1, trail=5, conds=['None', 'I'],
-            bin=True, split=True, plot=False, bin_sz=1)
+            bin=False, split=False, plot=False, bin_sz=1)
+    # IDEA: Add marker to cable plots to indicate the 'mid' point? Seems like
+    # sometimes the control synapse is not quite at the 0 distance point.
+    # not sure why this would be the case, but from a glance at the plots it
+    # seems possible.
