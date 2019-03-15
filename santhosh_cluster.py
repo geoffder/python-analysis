@@ -12,8 +12,8 @@ base = 'D:\\calcium\\'
 folder = ''
 dataPath = base + folder
 
-data = pd.read_csv(dataPath+'santhosh_peaks_norm_rm32.csv').values
-# data = pd.read_csv(dataPath+'santhosh_peaks_dirNorm.csv').values
+# data = pd.read_csv(dataPath+'santhosh_peaks_norm_rm32.csv').values
+data = pd.read_csv(dataPath+'santhosh_peaks_dirNorm.csv').values
 print('data shape:', data.shape)
 
 # principle component analysis
@@ -23,22 +23,31 @@ reduced = pca.fit_transform(data)
 clustering = MeanShift().fit(reduced[:, :2])
 ms_labels = clustering.labels_
 
-fig1, ax1 = plt.subplots(1)
-ax1.scatter(reduced[:, 0], reduced[:, 1], c=ms_labels, s=100,  alpha=.5)
-ax1.set_title('Top 2 Principle Components')
-ax1.set_xlabel('component 1')
-ax1.set_ylabel('component 2')
-
+# Top 2 PCA componenets, plotted with ROI number
+fig1, ax1 = plt.subplots(1, 3, figsize=(14, 6))
+for i in range(reduced.shape[0]):
+    ax1[0].scatter(reduced[i, 0], reduced[i, 1], alpha=.5, s=100, c='0',
+                   marker='$%s$' % i)
+ax1[0].set_title('with ROI numbers')
+ax1[0].set_xlabel('component 1')
+ax1[0].set_ylabel('component 2')
+# Top 2 PCA componenets, plotted with Mean Shift Labels
+ax1[1].scatter(reduced[:, 0], reduced[:, 1], alpha=.5, s=100, c=ms_labels)
+ax1[1].set_title('with Mean Shift Labels')
+ax1[1].set_xlabel('component 1')
+ax1[1].set_ylabel('component 2')
+# cumulative variance explained
 cumulative = np.cumsum(pca.explained_variance_ratio_)
-fig2, ax2 = plt.subplots(1)
-ax2.plot(cumulative)
-ax2.set_title('Cumulative Information')
-ax2.set_xlabel('dimensions')
-ax2.set_ylabel('variance explained')
+ax1[2].plot(cumulative)
+ax1[2].set_title('Cumulative Information')
+ax1[2].set_xlabel('dimensions')
+ax1[2].set_ylabel('variance explained')
+fig1.tight_layout()
 
+# Top 3 PCA componenets, plotted with Mean Shift Labels
 fig3 = plt.figure()
 ax3 = fig3.add_subplot(111, projection='3d')
-ax3.scatter(reduced[:, 0], reduced[:, 1], reduced[:, 2], s=100,  alpha=.5,
+ax3.scatter(reduced[:, 0], reduced[:, 1], reduced[:, 2], alpha=.5, s=100,
             c=ms_labels)
 ax3.set_title('Top 3 Principle Components')
 
