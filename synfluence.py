@@ -428,8 +428,8 @@ if __name__ == '__main__':
     # locPlot = locDists(proxDists, proxLocs)
     # locPlot.savefig(dataPath+'locPlot.png')
 
-    dirLoop(trial='avg', maxDist=100, lead=1, trail=5, conds=['None', 'I'],
-            bin=False, split=False, plot=False, bin_sz=1)
+    dirLoop(trial='avg', maxDist=100, lead=5, trail=5, conds=['E', 'I'],
+            bin=True, split=False, plot=False, bin_sz=1)
     # IDEA: Add marker to cable plots to indicate the 'mid' point? Seems like
     # sometimes the control synapse is not quite at the 0 distance point.
     # not sure why this would be the case, but from a glance at the plots it
