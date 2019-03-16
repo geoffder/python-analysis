@@ -14,9 +14,11 @@ def main(load=False):
     base = 'D:\\calcium\\'
     folder = ''
     dataPath = base + folder
-
-    data = pd.read_csv(dataPath+'santhosh_peaks_norm_rm32.csv').values
-    # data = pd.read_csv(dataPath+'santhosh_peaks_dirNorm.csv').values
+    # filePath = dataPath+'santhosh_peaks_dir.csv'
+    # filePath = dataPath+'santhosh_peaks_dir_rm33.csv'
+    # filePath = dataPath+'santhosh_peaks_norm.csv'
+    filePath = dataPath+'santhosh_peaks_norm_rm33.csv'
+    data = pd.read_csv(filePath, header=None).values
     print('data shape:', data.shape)
 
     # hidden_layer_sizes = [40, 16, 2]
