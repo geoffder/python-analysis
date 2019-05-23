@@ -6,6 +6,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.cluster import MeanShift
+from scipy.cluster.hierarchy import linkage, dendrogram
 
 # load data
 base = 'D:\\calcium\\'
@@ -18,6 +19,11 @@ filePath = dataPath+'santhosh_peaks_norm_rm33.csv'
 data = pd.read_csv(filePath, header=None).values
 
 print('data shape:', data.shape)
+
+# hierarchical clustering
+Z = linkage(data, method='ward')
+dendrogram(Z)  # plot clustering as dendrogram
+plt.show()
 
 # principle component analysis
 pca = PCA()
