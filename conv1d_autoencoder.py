@@ -120,5 +120,6 @@ if __name__ == '__main__':
     a = torch.randn(10, 1, 350)
     print(autoencoder.forward(a).shape)
 
+    # TODO: Deal with...
     # issues with padding calculations and stride are causing mismatch of
     # downsampling -> transpose upsampling, so output is smaller than input.
