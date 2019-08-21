@@ -22,17 +22,43 @@ def load_mini_csvs(pth, prefix):
     return minis.T
 
 
-def normalizer(minis):
+def clip_traces(minis, start, end):
+    """
+    Default mini output from TaroTools has 40ms head, and 60ms tail, centred
+    around the peak. Often, recordings are 10kHz -> 10 samples/ms.
+    Note: Slicing is done by pts, not temporal scaling.
+    """
+    return {k: v[:, start:end] for k, v in minis.items()}
+
+
+def self_normalizer(minis):
     """
     Normalizes traces by their largest absolute value (so it works for inward
     and outward going currents). Expects numpy array of shape (N, T).
     """
-    return minis / np.abs(minis).max(axis=1).reshape(-1, 1)
+    minis = {
+        k: v / np.abs(v).max(axis=1).reshape(-1, 1) for k, v in minis.items()
+    }
+    return minis
+
+
+def grouped_normalizer(minis):
+    """
+    Takes the absolute value of, then normalizes traces by the largest value
+    across ALL recordings. Expects dict containing arrays of shape (N, T).
+    """
+    extremum = np.max(
+        np.nan_to_num(np.abs(np.concatenate([v for v in minis.values()])))
+    )
+    return {k: np.abs(v) / extremum for k, v in minis.items()}
 
 
 if __name__ == '__main__':
     datapath = "/media/geoff/Data/ss_minis/"
 
-    ach_minis = normalizer(load_mini_csvs(datapath, 'ACh'))
-    gaba_minis = normalizer(load_mini_csvs(datapath, 'GABA'))
-    mixed_minis = normalizer(load_mini_csvs(datapath, 'mixed'))
+    minis = {
+        trans: load_mini_csvs(datapath, trans)
+        for trans in ['ACh', 'GABA', 'mixed']
+    }
+
+    minis = grouped_normalizer(clip_traces(minis, 350, 700))
