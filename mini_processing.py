@@ -14,10 +14,10 @@ def load_mini_csvs(pth, prefix):
         if prefix in f and os.path.isfile(os.path.join(pth, f))
     ]
 
-    minis = np.concatenate([
+    minis = np.nan_to_num(np.concatenate([
         pd.read_csv(os.path.join(pth, fname), skiprows=2).values
         for fname in fnames
-    ], axis=1)
+    ], axis=1))
 
     return minis.T
 
@@ -37,7 +37,8 @@ def self_normalizer(minis):
     and outward going currents). Expects numpy array of shape (N, T).
     """
     minis = {
-        k: v / np.abs(v).max(axis=1).reshape(-1, 1) for k, v in minis.items()
+        k: np.abs(v) / (np.abs(v).max(axis=1).reshape(-1, 1) + .00001)
+        for k, v in minis.items()
     }
     return minis
 
@@ -48,9 +49,55 @@ def grouped_normalizer(minis):
     across ALL recordings. Expects dict containing arrays of shape (N, T).
     """
     extremum = np.max(
-        np.nan_to_num(np.abs(np.concatenate([v for v in minis.values()])))
+        np.abs(np.concatenate([v for v in minis.values()]))
     )
     return {k: np.abs(v) / extremum for k, v in minis.items()}
+
+
+def create_dataset(minis, balance=False):
+    """
+    Given a dict contaning arrays of processed minis, shape:(N, T), create a
+    return a labelled dataset suitable for machine learning applications.
+    """
+    # balance the samples of each group in the dataset
+    if balance:
+        N = np.max([recs.shape[0] for recs in minis.values()])
+        minis = {
+            k: np.concatenate([v]*(N//v.shape[0])) if N//v.shape[0] > 1 else v
+            for (k, v) in minis.items()
+        }
+    # combine all recs into single array, and add singleton channel dimension
+    miniset = np.concatenate([recs for recs in minis.values()])
+    miniset = miniset.reshape(miniset.shape[0], 1, -1)
+    # integer label array
+    labels = np.concatenate([
+        [i]*recs.shape[0]
+        for (i, recs) in enumerate(minis.values())
+    ])
+    # lookup for integer label -> actual label
+    label_strs = [k for k in minis.keys()]
+
+    return miniset, labels, label_strs
+
+
+def get_minis_dataset(pth, start=370, end=490, norm='self'):
+    """
+    Load and process minis for autoencoder model.
+    """
+    minis = {
+        trans: load_mini_csvs(pth, trans)
+        for trans in ['ACh', 'GABA']
+    }
+
+    minis = clip_traces(minis, start, end)
+    if norm == 'self':
+        minis = self_normalizer(minis)
+    else:
+        minis = grouped_normalizer(minis)
+
+    minis, labels, label_strs = create_dataset(minis)
+
+    return minis, labels, label_strs
 
 
 if __name__ == '__main__':
@@ -61,4 +108,6 @@ if __name__ == '__main__':
         for trans in ['ACh', 'GABA', 'mixed']
     }
 
-    minis = grouped_normalizer(clip_traces(minis, 350, 700))
+    minis = self_normalizer(clip_traces(minis, 350, 702))
+
+    X, T, Tlabels = create_dataset(minis)
