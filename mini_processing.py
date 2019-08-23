@@ -31,7 +31,7 @@ def clip_traces(minis, start, end):
     return {k: v[:, start:end] for k, v in minis.items()}
 
 
-def self_normalizer(minis):
+def self_max_normalizer(minis):
     """
     Normalizes traces by their largest absolute value (so it works for inward
     and outward going currents). Expects numpy array of shape (N, T).
@@ -43,7 +43,22 @@ def self_normalizer(minis):
     return minis
 
 
-def grouped_normalizer(minis):
+def self_mean_normalizer(minis):
+    """
+    Normalizes traces by their mean absolute value (so it works for inward
+    and outward going currents) and variane. Expects numpy array of
+    shape (N, T).
+    """
+    abs_minis = {k: np.abs(v) for k, v in minis.items()}
+
+    minis = {
+        k: (v - v.mean(axis=1).reshape(-1, 1)) / (v.var(axis=1).reshape(-1, 1) + .00001)
+        for k, v in abs_minis.items()
+    }
+    return minis
+
+
+def grouped_max_normalizer(minis):
     """
     Takes the absolute value of, then normalizes traces by the largest value
     across ALL recordings. Expects dict containing arrays of shape (N, T).
@@ -52,6 +67,12 @@ def grouped_normalizer(minis):
         np.abs(np.concatenate([v for v in minis.values()]))
     )
     return {k: np.abs(v) / extremum for k, v in minis.items()}
+
+
+def grouped_mean_normalizer(minis):
+    all_abs_minis = np.abs(np.concatenate([v for v in minis.values()]))
+    mean, var = np.mean(all_abs_minis), np.var(all_abs_minis)
+    return {k: (np.abs(v) - mean) / var for k, v in minis.items()}
 
 
 def create_dataset(minis, balance=False):
@@ -80,7 +101,7 @@ def create_dataset(minis, balance=False):
     return miniset, labels, label_strs
 
 
-def get_minis_dataset(pth, start=370, end=490, norm='self'):
+def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
     """
     Load and process minis for autoencoder model.
     """
@@ -90,10 +111,15 @@ def get_minis_dataset(pth, start=370, end=490, norm='self'):
     }
 
     minis = clip_traces(minis, start, end)
-    if norm == 'self':
-        minis = self_normalizer(minis)
+
+    if norm == 'self_max':
+        minis = self_max_normalizer(minis)
+    elif norm == 'self_mean':
+        minis = self_mean_normalizer(minis)
+    elif norm == 'group_max':
+        minis = grouped_max_normalizer(minis)
     else:
-        minis = grouped_normalizer(minis)
+        minis = grouped_mean_normalizer(minis)
 
     minis, labels, label_strs = create_dataset(minis)
 
