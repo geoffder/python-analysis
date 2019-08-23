@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+from sklearn.manifold import TSNE
+
 import torch
 from torch import nn
 from torch import optim
@@ -87,7 +89,12 @@ class Conv1dAutoEncoder(nn.Module):
         return self.encoder_net(X)
 
     def decode(self, X):
-        for layer in reversed(self.encoder_net):
+        for i, layer in enumerate(reversed(self.encoder_net)):
+            # skip the last layer of the encoder, which is a non-linearity.
+            # Do not want non-linearity -> non-linearity.
+            if not i:
+                continue
+
             if isinstance(layer, nn.Conv1d):
                 st_pad = layer.stride[0] // 2
                 X = F.conv_transpose1d(
@@ -101,8 +108,7 @@ class Conv1dAutoEncoder(nn.Module):
             # elif not isinstance(layer, nn.BatchNorm1d):
             else:
                 X = layer(X)
-        X = torch.sigmoid(X)
-        return X
+        return torch.tanh(X)
 
     def forward(self, X):
         return self.decode(self.encode(X))
@@ -120,6 +126,8 @@ class Conv1dAutoEncoder(nn.Module):
         costs = []
         for i in range(epochs):
             print("epoch:", i, "n_batches:", n_batches)
+            inds = torch.randperm(X.shape[0])
+            X = X[inds]
             for j in range(n_batches):
                 Xbatch = X[j*batch_sz:(j*batch_sz+batch_sz)]
 
@@ -197,6 +205,7 @@ class Conv1dAutoEncoder(nn.Module):
 
 
 def ae_build_1():
+    """Works with length 352"""
     autoencoder = Conv1dAutoEncoder([
         {'type': 'conv', 'in': 1, 'out': 128, 'kernel': 11, 'stride': 2},
         {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 11, 'stride': 2},
@@ -208,16 +217,17 @@ def ae_build_1():
             'pad': 'valid'
         },
         {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 2},
+        {'type': 'dense', 'in': 128, 'out': 10},
     ])
     return autoencoder
 
 
 def ae_build_2():
+    """Works with length 120"""
     autoencoder = Conv1dAutoEncoder([
         {
             'type': 'conv', 'in': 1, 'out': 128, 'kernel': 11, 'stride': 1,
-            'activation': nn.Sigmoid
+            'activation': nn.Tanh
         },
         {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 5, 'stride': 2},
         {'type': 'conv', 'in': 256, 'out': 256, 'kernel': 3, 'stride': 1},
@@ -230,36 +240,57 @@ def ae_build_2():
             'pad': 'valid'
         },
         {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 2, 'activation': nn.Sigmoid},
+        {'type': 'dense', 'in': 128, 'out': 10, 'activation': nn.Tanh},
     ])
     return autoencoder
 
 
-"""
-NOTES:
--> Fix decode() to have more appropriate ordering of operations, and possibly
-    its own batch norms?
--> currently the average is just being learned, must tweak architecture to fix
--> try reducing down to 10 dimensions in the middle, rather than 2,
-    then use t-SNE to plot in 2 dimensions.
-"""
+def ae_build_3():
+    """Works with length 352"""
+    autoencoder = Conv1dAutoEncoder([
+        {'type': 'conv', 'in': 1, 'out': 128, 'kernel': 11, 'stride': 1},
+        {'type': 'conv', 'in': 128, 'out': 128, 'kernel': 5, 'stride': 2},
+        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 5, 'stride': 2},
+        {'type': 'conv', 'in': 256, 'out': 256, 'kernel': 3, 'stride': 1},
+        {'type': 'conv', 'in': 256, 'out': 512, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 512, 'out': 512, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 512, 'out': 256, 'kernel': 3, 'stride': 2},
+        {
+            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 11, 'stride': 1,
+            'pad': 'valid'
+        },
+        {'type': 'squeeze'},
+        {'type': 'dense', 'in': 128, 'out': 10},
+    ])
+    return autoencoder
+
+
 if __name__ == '__main__':
     torch.backends.cudnn.benchmark = True
 
     datapath = "/media/geoff/Data/ss_minis/"
 
     print("Loading data...")
-    minis, labels, label_strs = get_minis_dataset(datapath)
+    minis, labels, label_strs = get_minis_dataset(
+        # datapath, start=370, end=490, norm='self_max'
+        datapath, start=350, end=702, norm='group_mean'
+    )
 
     print("Building network...")
-    autoencoder = ae_build_2()
+    autoencoder = ae_build_3()
 
     print("Fitting model...")
-    autoencoder.fit(minis, lr=1e-3, epochs=15, show_plot=False)
+    autoencoder.fit(minis, lr=1e-4, epochs=30, show_plot=False)
 
     print("Viewing dimensionality reduction...")
     reduced = autoencoder.get_reduced(minis)
-    plt.scatter(reduced[:, 0], reduced[:, 1])
+
+    if reduced.shape[1] > 2:
+        reduced = TSNE(
+            n_components=2, perplexity=30, learning_rate=100, n_iter=2000
+        ).fit_transform(reduced)
+
+    plt.scatter(reduced[:, 0], reduced[:, 1], c=labels, alpha=.3)
     plt.show()
 
     print("Viewing reconstructions...")
