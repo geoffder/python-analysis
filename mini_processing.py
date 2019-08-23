@@ -52,7 +52,8 @@ def self_mean_normalizer(minis):
     abs_minis = {k: np.abs(v) for k, v in minis.items()}
 
     minis = {
-        k: (v - v.mean(axis=1).reshape(-1, 1)) / (v.var(axis=1).reshape(-1, 1) + .00001)
+        k: (v - v.mean(axis=1).reshape(-1, 1))
+        / (v.var(axis=1).reshape(-1, 1) + .00001)
         for k, v in abs_minis.items()
     }
     return minis
@@ -70,6 +71,10 @@ def grouped_max_normalizer(minis):
 
 
 def grouped_mean_normalizer(minis):
+    """
+    Normalizes based on mean and variance of ALL minis across all groups
+    (absolute valued so that inward and outward events are treated the same.)
+    """
     all_abs_minis = np.abs(np.concatenate([v for v in minis.values()]))
     mean, var = np.mean(all_abs_minis), np.var(all_abs_minis)
     return {k: (np.abs(v) - mean) / var for k, v in minis.items()}
