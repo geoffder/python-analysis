@@ -126,8 +126,7 @@ class Conv1dAutoEncoder(nn.Module):
         costs = []
         for i in range(epochs):
             print("epoch:", i, "n_batches:", n_batches)
-            inds = torch.randperm(X.shape[0])
-            X = X[inds]
+            X = X[torch.randperm(X.shape[0])]  # shuffle
             for j in range(n_batches):
                 Xbatch = X[j*batch_sz:(j*batch_sz+batch_sz)]
 
@@ -260,7 +259,7 @@ def ae_build_3():
             'pad': 'valid'
         },
         {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 10},
+        {'type': 'dense', 'in': 128, 'out': 2},
     ])
     return autoencoder
 
