@@ -265,8 +265,6 @@ def ae_build_3():
 
 
 if __name__ == '__main__':
-    torch.backends.cudnn.benchmark = True
-
     datapath = "/media/geoff/Data/ss_minis/"
 
     print("Loading data...")
