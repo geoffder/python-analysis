@@ -2,7 +2,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import torch
+from torch import nn
+from torch import optim
 import torch.nn.functional as F
+
+
+def target_distribution(probs):
+    """
+    More certain cluster probabilities to serve as target for cluster loss.
+    Takes soft cluster assignments and pushes them 'harder' (-> argmax).
+    """
+    weight = probs**2 / probs.sum(dim=0)
+    return weight / weight.sum(dim=1).unsqueeze(1)
 
 
 def forgy_init(X, K):
@@ -22,6 +33,11 @@ def calc_distances(X, centres):
     return distances
 
 
+def calc_dispersion(X, centres, cluster_probs):
+    dists = (centres-X.mean(dim=0)).pow(2).sum(dim=1)
+    return dists @ cluster_probs.sum(dim=0).unsqueeze(1)
+
+
 def hard_cluster_index(X, clusters, centres):
     """Distance of samples from their assigned cluster centre."""
     error = torch.cat([
@@ -38,6 +54,15 @@ def soft_cluster_index(X, centres):
     dists = calc_distances(X, centres)
     probs = soft_assign_clusters(dists)
     return (dists * probs).sum() / X.shape[0]
+
+
+def calinski(X, centres):
+    K = centres.shape[0]
+    dists = calc_distances(X, centres)
+    probs = soft_assign_clusters(dists**2)  # experiment with squaring
+    between = calc_dispersion(X, centres, probs)
+    within = ((dists * probs).sum() / X.shape[0])
+    return -(between * (X.shape[0] - K)) / (within * (K - 1))
 
 
 def hard_adjust_centres(X, clusters, K):
@@ -67,8 +92,12 @@ def hard_assign_clusters(distances):
 
 def soft_assign_clusters(distances):
     """Calculate probabilities that points belong to each cluster."""
-    # return F.softmax((distances-distances.mean())/distances.var(), dim=1)
     return F.softmin(distances, dim=1)
+
+
+def soft_assign_alt(distances):
+    numer = 1 / (1 + distances)
+    return numer / numer.sum(dim=1, keepdim=True)
 
 
 def hard_kmeans(X, K, min_delta=1e-3):
@@ -117,8 +146,80 @@ def soft_kmeans(X, K, min_delta=1e-6):
         # calculate centre shift, halt when it drops below minimum
         delta = (centres - centres_old).pow(2).sum(dim=1).sqrt().sum()
 
-    error = soft_cluster_index(X, centres)
+    # error = soft_cluster_index(X, centres)
+    error = calinski(X, centres)
     return centres, cluster_probs, error
+
+
+class ClusterLayer(nn.Module):
+
+    def __init__(self, K, D):
+        super(ClusterLayer, self).__init__()
+        self.K = K
+        self.D = D
+        self.dv = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.build()
+        self.to(self.dv)
+
+    def build(self):
+        self.centres = nn.Parameter(
+            torch.randn(self.K, self.D)/np.sqrt(self.D)
+        )
+
+    def forward(self, X):
+        distances = torch.stack([
+            (X - centre.unsqueeze(0)).pow(2).sum(dim=1)
+            for centre in self.centres
+        ], dim=1)
+        return distances
+
+    def fit(self, X, lr=1e-2, epochs=100, batch_sz=100, print_every=30,
+            show_plot=False):
+
+        N = X.shape[0]
+        # X = torch.from_numpy(X).float().to(self.dv)
+        X = X.to(self.dv)
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+
+        n_batches = N // batch_sz
+        costs = []
+        for i in range(epochs):
+            print("epoch:", i, "n_batches:", n_batches)
+            X = X[torch.randperm(X.shape[0])]  # shuffle
+            for j in range(n_batches):
+                Xbatch = X[j*batch_sz:(j*batch_sz+batch_sz)]
+
+                cost = self.train_step(Xbatch)  # train
+
+                if j % print_every == 0:
+                    print("cost: %f" % (cost))
+                    costs.append(cost)
+
+        if show_plot:
+            plt.plot(costs)
+            plt.show()
+
+    def train_step(self, inputs):
+        self.train()  # set the model to training mode
+        self.optimizer.zero_grad()  # Reset gradient
+
+        # Forward
+        dists = self.forward(inputs)
+        probs = soft_assign_clusters(dists)
+        loss = F.kl_div(probs, target_distribution(probs).detach())
+
+        # between = calc_dispersion(inputs, self.centres, probs)
+        # within = ((dists * probs).sum() / inputs.shape[0])
+        # loss = -(between/within) * ((inputs.shape[0]-self.K) / (self.K-1))
+        # loss = -(between*(inputs.shape[0]-self.K))/(within*(self.K-1))
+        # loss = within
+
+        # Backward
+        loss.backward()
+        self.optimizer.step()  # Update parameters
+
+        return loss.item()
 
 
 if __name__ == '__main__':
@@ -128,13 +229,20 @@ if __name__ == '__main__':
     data = torch.cat([
         torch.randn(1000, 2) + i*10 for i in range(3)
     ], dim=0).to(dv)
-    centres, clusters, err = soft_kmeans(data, 3)
+    # centres, clusters, err = soft_kmeans(data, 3)
+
+    data = (data - data.mean(dim=0)) / data.var(dim=0)
+    clusterer = ClusterLayer(3, 2)
+    clusterer.fit(data, epochs=50, lr=1e-5)
+    centres = clusterer.centres
+    print(centres)
 
     # back to numpy
     data = data.cpu().numpy()
-    centres = centres.cpu().numpy()
-    clusters = clusters.cpu().numpy()
+    centres = centres.detach().cpu().numpy()
+    # clusters = clusters.cpu().numpy()
 
-    plt.scatter(data[:, 0], data[:, 1], c=clusters, alpha=.1)
+    # plt.scatter(data[:, 0], data[:, 1], c=clusters, alpha=.1)
+    plt.scatter(data[:, 0], data[:, 1], alpha=.1)
     plt.scatter(centres[:, 0], centres[:, 1], c='red', s=20)
     plt.show()

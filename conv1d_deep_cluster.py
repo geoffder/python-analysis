@@ -9,8 +9,8 @@ from torch import optim
 import torch.nn.functional as F
 
 from mini_processing import get_minis_dataset
-from torch_clustering import soft_kmeans
-
+from torch_clustering import soft_kmeans, calinski, target_distribution
+from torch_clustering import calc_distances, soft_assign_clusters
 
 def make_pool1d_layer(param_dict):
     params = (
@@ -23,6 +23,15 @@ def make_pool1d_layer(param_dict):
         return nn.AvgPool3d(*params)
 
 
+class Flatten(torch.nn.Module):
+    """Flattens multi-dimensional input to create an shape:(N, D) matrix"""
+    def __init__(self):
+        super(Flatten, self).__init__()
+
+    def forward(self, X):
+        return X.view(X.shape[0], -1)
+
+
 class Squeezer(nn.Module):
     def __init__(self):
         super(Squeezer, self).__init__()
@@ -32,16 +41,62 @@ class Squeezer(nn.Module):
         return torch.squeeze(X)
 
 
-class ClusterLoss(nn.Module):
+class ClusterLossKm(nn.Module):
 
     def __init__(self, K, alpha=1e-3):
-        super(ClusterLoss, self).__init__()
+        super(ClusterLossKm, self).__init__()
         self.K = K
         self.alpha = alpha
 
     def forward(self, X, encoding, decoding):
         decoder_loss = F.mse_loss(X, decoding)
-        _, _, cluster_loss = soft_kmeans(encoding, self.K)
+        if self.alpha > 0:
+            _, _, cluster_loss = soft_kmeans(encoding, self.K)
+        else:
+            cluster_loss = 0
+        return decoder_loss + (self.alpha * cluster_loss / X.shape[0])
+
+
+class ClusterLossCal(nn.Module):
+    def __init__(self, K, D, alpha=1e-3):
+        super(ClusterLossCal, self).__init__()
+        self.K = K
+        self.D = D
+        self.alpha = alpha
+        self.centres = nn.Parameter(
+            torch.randn(self.K, self.D)/np.sqrt(self.D)
+        )
+
+    def forward(self, X, encoding, decoding):
+        decoder_loss = F.mse_loss(X, decoding)
+        if self.alpha > 0:
+            cluster_loss = calinski(encoding, self.centres) / X.shape[0]
+        else:
+            cluster_loss = 0
+        return decoder_loss + cluster_loss * self.alpha
+
+
+class ClusterLossKLdiv(nn.Module):
+    def __init__(self, K, D, alpha=1000):
+        super(ClusterLossKLdiv, self).__init__()
+        self.K = K
+        self.D = D
+        self.alpha = alpha
+        self.centres = nn.Parameter(
+            torch.randn(self.K, self.D)/np.sqrt(self.D)
+        )
+
+    def forward(self, X, encoding, decoding):
+        decoder_loss = F.mse_loss(X, decoding)
+        if self.alpha > 0:
+            dists = calc_distances(encoding, self.centres)
+            probs = soft_assign_clusters(dists)
+            cluster_loss = F.kl_div(
+                probs.log(), target_distribution(probs).detach(),
+                reduction='batchmean'
+            )
+        else:
+            cluster_loss = 0
         return decoder_loss + cluster_loss * self.alpha
 
 
@@ -67,7 +122,6 @@ class Conv1dDeepClusterer(nn.Module):
                         p.get('bias', False)
                     )
                 )
-                # encoder_mods.append(nn.BatchNorm1d(p['out']))
                 encoder_mods.append(p.get('activation', nn.Tanh)())
                 if 'pool' in p:
                     encoder_mods.append(make_pool1d_layer(p['pool']))
@@ -78,6 +132,8 @@ class Conv1dDeepClusterer(nn.Module):
                 encoder_mods.append(p.get('activation', nn.Tanh)())
             elif p['type'] == 'squeeze':
                 encoder_mods.append(Squeezer())
+            elif p['type'] == 'flatten':
+                encoder_mods.append(Flatten())
 
         # package encoding layers as a Sequential network
         self.encoder_net = nn.Sequential(*encoder_mods)
@@ -102,6 +158,13 @@ class Conv1dDeepClusterer(nn.Module):
                 X = F.linear(X, layer.weight.transpose(0, 1), layer.bias)
             elif isinstance(layer, Squeezer):
                 X = torch.unsqueeze(X, dim=2)
+            elif isinstance(layer, Flatten):
+                # dirty hack to determine the correct C dimensionality
+                X = X.view(
+                    X.shape[0],
+                    list(self.encoder_net.children())[i-2].weight.shape[0],
+                    -1
+                )
             # elif not isinstance(layer, nn.BatchNorm1d):
             else:
                 X = layer(X)
@@ -111,13 +174,19 @@ class Conv1dDeepClusterer(nn.Module):
         Z = self.encode(X)
         return Z, self.decode(Z)
 
-    def fit(self, X, lr=1e-4, epochs=10, batch_sz=100, print_every=30,
-            show_plot=True):
+    def fit(self, X, K, lr=1e-4, epochs=10, batch_sz=300, cluster_alpha=1e-8,
+            clust_mode='Km', print_every=30, show_plot=True):
 
         N = X.shape[0]
+        D = list(self.encoder_net.children())[-2].weight.shape[0]
         X = torch.from_numpy(X).float().to(self.dv)
 
-        self.loss = ClusterLoss(2, alpha=1e-8).to(self.dv)
+        if clust_mode == 'Km':
+            self.loss = ClusterLossKm(K, alpha=cluster_alpha).to(self.dv)
+        elif clust_mode == 'Cal':
+            self.loss = ClusterLossCal(K, D, alpha=cluster_alpha).to(self.dv)
+        elif clust_mode == 'KLdiv':
+            self.loss = ClusterLossKLdiv(K, D, alpha=cluster_alpha).to(self.dv)
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
         n_batches = N // batch_sz
@@ -194,10 +263,10 @@ class Conv1dDeepClusterer(nn.Module):
                 ax.plot(np.squeeze(construct))
             plt.show()
 
-            again = input(
-                "Show another reconstruction? Enter 'n' to quit\n"
-            )
-            # again = 'n'
+            # again = input(
+            #     "Show another reconstruction? Enter 'n' to quit\n"
+            # )
+            again = 'n'
             if again == 'n':
                 break
 
@@ -258,7 +327,39 @@ def ae_build_3():
             'pad': 'valid'
         },
         {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 10},
+        {'type': 'dense', 'in': 128, 'out': 5},
+    ])
+    return autoencoder
+
+
+def ae_build_4():
+    """Works with length 383"""
+    autoencoder = Conv1dDeepClusterer([
+        {'type': 'conv', 'in': 1, 'out': 64, 'kernel': 11, 'stride': 4},
+        {'type': 'conv', 'in': 64, 'out': 128, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 256, 'out': 128, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 128, 'out': 64, 'kernel': 3, 'stride': 2},
+        {'type': 'flatten'},
+        {'type': 'dense', 'in': 384, 'out': 10},
+    ])
+    return autoencoder
+
+
+def ae_build_5():
+    """Works with length 383"""
+    autoencoder = Conv1dDeepClusterer([
+        {'type': 'conv', 'in': 1, 'out': 64, 'kernel': 11, 'stride': 4},
+        {'type': 'conv', 'in': 64, 'out': 128, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 256, 'out': 128, 'kernel': 3, 'stride': 2},
+        {'type': 'conv', 'in': 128, 'out': 64, 'kernel': 3, 'stride': 2},
+        {
+            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 6, 'stride': 1,
+            'pad': 'valid'
+        },
+        {'type': 'squeeze'},
+        {'type': 'dense', 'in': 128, 'out': 12},
     ])
     return autoencoder
 
@@ -267,23 +368,28 @@ if __name__ == '__main__':
     datapath = "/media/geoff/Data/ss_minis/"
 
     print("Loading data...")
+    length = 383
     minis, labels, label_strs = get_minis_dataset(
         # datapath, start=370, end=490, norm='self_max'
-        datapath, start=350, end=702, norm='group_mean'
+        # datapath, start=350, end=702, norm='group_mean'
+        datapath, start=350, end=350+length, norm='group_mean'
     )
 
     print("Building network...")
-    autoencoder = ae_build_3()
+    autoencoder = ae_build_5()
 
     print("Fitting model...")
-    autoencoder.fit(minis, lr=1e-5, epochs=30, show_plot=False)
+    autoencoder.fit(
+        minis, 2, lr=1e-3, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
+        show_plot=False
+    )
 
     print("Viewing dimensionality reduction...")
     reduced = autoencoder.get_reduced(minis)
 
     if reduced.shape[1] > 2:
         reduced = TSNE(
-            n_components=2, perplexity=30, learning_rate=100, n_iter=2000
+            n_components=2, perplexity=50, learning_rate=400, n_iter=1000
         ).fit_transform(reduced)
 
     plt.scatter(reduced[:, 0], reduced[:, 1], c=labels, alpha=.3)
