@@ -259,7 +259,7 @@ def ae_build_3():
             'pad': 'valid'
         },
         {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 2},
+        {'type': 'dense', 'in': 128, 'out': 5},
     ])
     return autoencoder
 
@@ -277,7 +277,7 @@ if __name__ == '__main__':
     autoencoder = ae_build_3()
 
     print("Fitting model...")
-    autoencoder.fit(minis, lr=1e-4, epochs=30, show_plot=False)
+    autoencoder.fit(minis, lr=1e-4, batch_sz=300, epochs=30, show_plot=False)
 
     print("Viewing dimensionality reduction...")
     reduced = autoencoder.get_reduced(minis)
