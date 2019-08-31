@@ -112,7 +112,8 @@ def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
     """
     minis = {
         trans: load_mini_csvs(pth, trans)
-        for trans in ['ACh', 'GABA']
+        # for trans in ['ACh', 'GABA']
+        for trans in ['ACh', 'GABA', 'mixed']
     }
 
     minis = clip_traces(minis, start, end)
