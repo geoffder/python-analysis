@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 from sklearn.manifold import TSNE
 
@@ -43,9 +44,10 @@ class Squeezer(nn.Module):
 
 class ClusterLossKm(nn.Module):
 
-    def __init__(self, K, alpha=1e-3):
+    def __init__(self, K, D, alpha=1e-3):
         super(ClusterLossKm, self).__init__()
         self.K = K
+        self.D = D
         self.alpha = alpha
 
     def forward(self, X, encoding, decoding):
@@ -82,8 +84,11 @@ class ClusterLossKLdiv(nn.Module):
         self.K = K
         self.D = D
         self.alpha = alpha
+        # self.centres = nn.Parameter(
+        #     torch.randn(self.K, self.D)/np.sqrt(self.D)
+        # )
         self.centres = nn.Parameter(
-            torch.randn(self.K, self.D)/np.sqrt(self.D)
+            nn.init.xavier_uniform_(torch.zeros(self.K, self.D))
         )
 
     def forward(self, X, encoding, decoding):
@@ -182,11 +187,12 @@ class Conv1dDeepClusterer(nn.Module):
         X = torch.from_numpy(X).float().to(self.dv)
 
         if clust_mode == 'Km':
-            self.loss = ClusterLossKm(K, alpha=cluster_alpha).to(self.dv)
+            self.loss = ClusterLossKm(K, D, alpha=cluster_alpha).to(self.dv)
         elif clust_mode == 'Cal':
             self.loss = ClusterLossCal(K, D, alpha=cluster_alpha).to(self.dv)
         elif clust_mode == 'KLdiv':
             self.loss = ClusterLossKLdiv(K, D, alpha=cluster_alpha).to(self.dv)
+
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
         n_batches = N // batch_sz
@@ -257,10 +263,13 @@ class Conv1dDeepClusterer(nn.Module):
                 constructs = constructs.cpu().numpy()
                 del tensors
 
-            fig, axes = plt.subplots(batch_sz, 1)
-            for ax, sample, construct in zip(axes, samples, constructs):
-                ax.plot(np.squeeze(sample))
-                ax.plot(np.squeeze(construct))
+            n_cols = batch_sz // 5
+            fig, axes = plt.subplots(batch_sz // n_cols, n_cols)
+            for ax, sample, construct in zip(
+                    axes.flatten(), samples, constructs):
+                ax.plot(np.squeeze(sample), label='sample')
+                ax.plot(np.squeeze(construct), label='construct')
+            plt.legend()
             plt.show()
 
             # again = input(
@@ -341,7 +350,7 @@ def ae_build_4():
         {'type': 'conv', 'in': 256, 'out': 128, 'kernel': 3, 'stride': 2},
         {'type': 'conv', 'in': 128, 'out': 64, 'kernel': 3, 'stride': 2},
         {'type': 'flatten'},
-        {'type': 'dense', 'in': 384, 'out': 10},
+        {'type': 'dense', 'in': 384, 'out': 12},
     ])
     return autoencoder
 
@@ -365,6 +374,9 @@ def ae_build_5():
 
 
 if __name__ == '__main__':
+    # change colours used for sequential plotting
+    mpl.style.use('seaborn')
+
     datapath = "/media/geoff/Data/ss_minis/"
 
     print("Loading data...")
@@ -380,7 +392,9 @@ if __name__ == '__main__':
 
     print("Fitting model...")
     autoencoder.fit(
-        minis, 2, lr=1e-3, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
+        minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
+        # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
+        # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1e-5, clust_mode='Km',
         show_plot=False
     )
 
@@ -389,11 +403,17 @@ if __name__ == '__main__':
 
     if reduced.shape[1] > 2:
         reduced = TSNE(
-            n_components=2, perplexity=50, learning_rate=400, n_iter=1000
+            n_components=2, perplexity=75, learning_rate=400, n_iter=1000
         ).fit_transform(reduced)
 
-    plt.scatter(reduced[:, 0], reduced[:, 1], c=labels, alpha=.3)
+    # plt.scatter(reduced[:, 0], reduced[:, 1], c=labels, alpha=.3)
+    # plt.show()
+
+    for label in np.unique(labels):
+        grp = reduced[labels == label]
+        plt.scatter(grp[:, 0], grp[:, 1], label=label_strs[label], alpha=.5)
+    plt.legend()
     plt.show()
 
     print("Viewing reconstructions...")
-    autoencoder.reconstruct(minis)
+    autoencoder.reconstruct(minis, batch_sz=10)
