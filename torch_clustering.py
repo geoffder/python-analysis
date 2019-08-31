@@ -59,7 +59,7 @@ def soft_cluster_index(X, centres):
 def calinski(X, centres):
     K = centres.shape[0]
     dists = calc_distances(X, centres)
-    probs = soft_assign_clusters(dists**2)  # experiment with squaring
+    probs = soft_assign_clusters(dists)  # experiment with squaring
     between = calc_dispersion(X, centres, probs)
     within = ((dists * probs).sum() / X.shape[0])
     return -(between * (X.shape[0] - K)) / (within * (K - 1))
@@ -124,7 +124,7 @@ def hard_kmeans(X, K, min_delta=1e-3):
     return centres, clusters, error
 
 
-def soft_kmeans(X, K, min_delta=1e-6):
+def soft_kmeans(X, K, min_delta=1e-9):
     """
     K-means pytorch implementation using softmax cluster probability
     assignment, rather than hard assigment with argmax. This way the algorithm
@@ -132,6 +132,9 @@ def soft_kmeans(X, K, min_delta=1e-6):
     """
     # initialize centres at random samples
     centres = forgy_init(X, K)
+    # centres = nn.init.xavier_uniform_(
+    #     torch.zeros(K, X.shape[1], dtype=torch.float).cuda()
+    # )
 
     delta = 10000  # ghetto do while
     while delta**2 > min_delta:
