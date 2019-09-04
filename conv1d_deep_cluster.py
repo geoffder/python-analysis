@@ -11,7 +11,9 @@ import torch.nn.functional as F
 
 from mini_processing import get_minis_dataset
 from torch_clustering import soft_kmeans, calinski, target_distribution
-from torch_clustering import calc_distances, soft_assign_clusters
+from torch_clustering import calc_distances, soft_assign_clusters, hard_kmeans
+import cluster_ae_builds as builds
+
 
 def make_pool1d_layer(param_dict):
     params = (
@@ -19,9 +21,9 @@ def make_pool1d_layer(param_dict):
         param_dict.get('padding', 0)
     )
     if param_dict.get('op', 'avg') == 'max':
-        return nn.MaxPool3d(*params)
+        return nn.MaxPool1d(*params)
     else:
-        return nn.AvgPool3d(*params)
+        return nn.AvgPool1d(*params)
 
 
 class Flatten(torch.nn.Module):
@@ -130,6 +132,8 @@ class Conv1dDeepClusterer(nn.Module):
                 encoder_mods.append(p.get('activation', nn.Tanh)())
                 if 'pool' in p:
                     encoder_mods.append(make_pool1d_layer(p['pool']))
+            elif p['type'] == 'pool':
+                encoder_mods.append(make_pool1d_layer(p))
             elif p['type'] == 'dense':
                 encoder_mods.append(
                     nn.Linear(p['in'], p['out'], p.get('bias', False))
@@ -154,13 +158,18 @@ class Conv1dDeepClusterer(nn.Module):
                 continue
 
             if isinstance(layer, nn.Conv1d):
+                if layer.bias is not None:
+                    X = X + layer.bias.unsqueeze(1)
+
                 st_pad = layer.stride[0] // 2
                 X = F.conv_transpose1d(
-                    X, layer.weight, layer.bias, layer.stride, layer.padding,
+                    X, layer.weight, None, layer.stride, layer.padding,
                     st_pad, layer.groups, layer.dilation
                 )
             elif isinstance(layer, nn.Linear):
                 X = F.linear(X, layer.weight.transpose(0, 1), layer.bias)
+            elif isinstance(layer, nn.AvgPool1d):
+                X = F.interpolate(X, scale_factor=layer.stride)
             elif isinstance(layer, Squeezer):
                 X = torch.unsqueeze(X, dim=2)
             elif isinstance(layer, Flatten):
@@ -280,99 +289,6 @@ class Conv1dDeepClusterer(nn.Module):
                 break
 
 
-def ae_build_1():
-    """Works with length 352"""
-    autoencoder = Conv1dDeepClusterer([
-        {'type': 'conv', 'in': 1, 'out': 128, 'kernel': 11, 'stride': 2},
-        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 11, 'stride': 2},
-        {'type': 'conv', 'in': 256, 'out': 512, 'kernel': 11, 'stride': 2},
-        {'type': 'conv', 'in': 512, 'out': 512, 'kernel': 11, 'stride': 2},
-        {'type': 'conv', 'in': 512, 'out': 256, 'kernel': 11, 'stride': 2},
-        {
-            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 11, 'stride': 1,
-            'pad': 'valid'
-        },
-        {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 10},
-    ])
-    return autoencoder
-
-
-def ae_build_2():
-    """Works with length 120"""
-    autoencoder = Conv1dDeepClusterer([
-        {
-            'type': 'conv', 'in': 1, 'out': 128, 'kernel': 11, 'stride': 1,
-            'activation': nn.Tanh
-        },
-        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 5, 'stride': 2},
-        {'type': 'conv', 'in': 256, 'out': 256, 'kernel': 3, 'stride': 1},
-        {'type': 'conv', 'in': 256, 'out': 256, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 256, 'out': 256, 'kernel': 3, 'stride': 1},
-        {'type': 'conv', 'in': 256, 'out': 512, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 512, 'out': 256, 'kernel': 3, 'stride': 1},
-        {
-            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 15, 'stride': 1,
-            'pad': 'valid'
-        },
-        {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 10, 'activation': nn.Tanh},
-    ])
-    return autoencoder
-
-
-def ae_build_3():
-    """Works with length 352"""
-    autoencoder = Conv1dDeepClusterer([
-        {'type': 'conv', 'in': 1, 'out': 128, 'kernel': 11, 'stride': 1},
-        {'type': 'conv', 'in': 128, 'out': 128, 'kernel': 5, 'stride': 2},
-        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 5, 'stride': 2},
-        {'type': 'conv', 'in': 256, 'out': 256, 'kernel': 3, 'stride': 1},
-        {'type': 'conv', 'in': 256, 'out': 512, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 512, 'out': 512, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 512, 'out': 256, 'kernel': 3, 'stride': 2},
-        {
-            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 11, 'stride': 1,
-            'pad': 'valid'
-        },
-        {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 5},
-    ])
-    return autoencoder
-
-
-def ae_build_4():
-    """Works with length 383"""
-    autoencoder = Conv1dDeepClusterer([
-        {'type': 'conv', 'in': 1, 'out': 64, 'kernel': 11, 'stride': 4},
-        {'type': 'conv', 'in': 64, 'out': 128, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 256, 'out': 128, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 128, 'out': 64, 'kernel': 3, 'stride': 2},
-        {'type': 'flatten'},
-        {'type': 'dense', 'in': 384, 'out': 12},
-    ])
-    return autoencoder
-
-
-def ae_build_5():
-    """Works with length 383"""
-    autoencoder = Conv1dDeepClusterer([
-        {'type': 'conv', 'in': 1, 'out': 64, 'kernel': 11, 'stride': 4},
-        {'type': 'conv', 'in': 64, 'out': 128, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 128, 'out': 256, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 256, 'out': 128, 'kernel': 3, 'stride': 2},
-        {'type': 'conv', 'in': 128, 'out': 64, 'kernel': 3, 'stride': 2},
-        {
-            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 6, 'stride': 1,
-            'pad': 'valid'
-        },
-        {'type': 'squeeze'},
-        {'type': 'dense', 'in': 128, 'out': 12},
-    ])
-    return autoencoder
-
-
 if __name__ == '__main__':
     # change colours used for sequential plotting
     mpl.style.use('seaborn')
@@ -388,11 +304,12 @@ if __name__ == '__main__':
     )
 
     print("Building network...")
-    autoencoder = ae_build_5()
+    autoencoder = builds.ae_build_5()
 
     print("Fitting model...")
     autoencoder.fit(
         minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
+        # minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.1, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1e-5, clust_mode='Km',
         show_plot=False
@@ -401,17 +318,31 @@ if __name__ == '__main__':
     print("Viewing dimensionality reduction...")
     reduced = autoencoder.get_reduced(minis)
 
+    # Cluster reduced data, and calculate how labels are divided between the
+    # obtained clusters.
+    K = 3
+    _, clusters, _ = hard_kmeans(torch.from_numpy(reduced), K)
+    clusters = clusters.cpu().numpy()
+    # number of occurences of each label in each cluster
+    counts = np.array([
+        [np.sum(labels[clusters == j] == i) for i in np.unique(labels)]
+        for j in range(K)
+    ])
+    # percentage of each label (col) group located in each cluster (row)
+    ratios = counts / counts.sum(axis=1)
+    print(ratios)
+
     if reduced.shape[1] > 2:
         reduced = TSNE(
             n_components=2, perplexity=75, learning_rate=400, n_iter=1000
         ).fit_transform(reduced)
 
-    # plt.scatter(reduced[:, 0], reduced[:, 1], c=labels, alpha=.3)
-    # plt.show()
-
+    fig, ax = plt.subplots(1, 2)
     for label in np.unique(labels):
         grp = reduced[labels == label]
-        plt.scatter(grp[:, 0], grp[:, 1], label=label_strs[label], alpha=.5)
+        ax[0].scatter(grp[:, 0], grp[:, 1], label=label_strs[label], alpha=.5)
+    ax[1].scatter(reduced[:, 0], reduced[:, 1], c=clusters, alpha=.5)
+
     plt.legend()
     plt.show()
 
