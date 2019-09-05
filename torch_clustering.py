@@ -154,6 +154,16 @@ def soft_kmeans(X, K, min_delta=1e-9):
     return centres, cluster_probs, error
 
 
+def cluster_counts(clusters, labels):
+    counts = np.array([
+        [np.sum(labels[clusters == j] == i) for i in np.unique(labels)]
+        for j in np.unique(clusters)
+    ])
+
+    # percentage of each label (col) population located in each cluster (row)
+    ratios = counts / counts.sum(axis=0)
+    return counts, ratios
+
 class ClusterLayer(nn.Module):
 
     def __init__(self, K, D):

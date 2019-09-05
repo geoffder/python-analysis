@@ -10,8 +10,7 @@ from torch import optim
 import torch.nn.functional as F
 
 from mini_processing import get_minis_dataset
-from torch_clustering import soft_kmeans, calinski, target_distribution
-from torch_clustering import calc_distances, soft_assign_clusters, hard_kmeans
+import torch_clustering as clorch
 import cluster_ae_builds as builds
 
 
@@ -55,7 +54,7 @@ class ClusterLossKm(nn.Module):
     def forward(self, X, encoding, decoding):
         decoder_loss = F.mse_loss(X, decoding)
         if self.alpha > 0:
-            _, _, cluster_loss = soft_kmeans(encoding, self.K)
+            _, _, cluster_loss = clorch.soft_kmeans(encoding, self.K)
         else:
             cluster_loss = 0
         return decoder_loss + (self.alpha * cluster_loss / X.shape[0])
@@ -74,7 +73,7 @@ class ClusterLossCal(nn.Module):
     def forward(self, X, encoding, decoding):
         decoder_loss = F.mse_loss(X, decoding)
         if self.alpha > 0:
-            cluster_loss = calinski(encoding, self.centres) / X.shape[0]
+            cluster_loss = clorch.calinski(encoding, self.centres) / X.shape[0]
         else:
             cluster_loss = 0
         return decoder_loss + cluster_loss * self.alpha
@@ -96,10 +95,10 @@ class ClusterLossKLdiv(nn.Module):
     def forward(self, X, encoding, decoding):
         decoder_loss = F.mse_loss(X, decoding)
         if self.alpha > 0:
-            dists = calc_distances(encoding, self.centres)
-            probs = soft_assign_clusters(dists)
+            dists = clorch.calc_distances(encoding, self.centres)
+            probs = clorch.soft_assign_clusters(dists)
             cluster_loss = F.kl_div(
-                probs.log(), target_distribution(probs).detach(),
+                probs.log(), clorch.target_distribution(probs).detach(),
                 reduction='batchmean'
             )
         else:
@@ -309,7 +308,7 @@ if __name__ == '__main__':
     print("Fitting model...")
     autoencoder.fit(
         minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
-        # minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.1, clust_mode='KLdiv',
+        # minis, 2, lr=1e-3, epochs=75, cluster_alpha=1.6, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1e-5, clust_mode='Km',
         show_plot=False
@@ -320,30 +319,45 @@ if __name__ == '__main__':
 
     # Cluster reduced data, and calculate how labels are divided between the
     # obtained clusters.
-    K = 3
-    _, clusters, _ = hard_kmeans(torch.from_numpy(reduced), K)
+    centres, clusters, _ = clorch.hard_kmeans(torch.from_numpy(reduced), 3)
     clusters = clusters.cpu().numpy()
-    # number of occurences of each label in each cluster
-    counts = np.array([
-        [np.sum(labels[clusters == j] == i) for i in np.unique(labels)]
-        for j in range(K)
-    ])
-    # percentage of each label (col) group located in each cluster (row)
-    ratios = counts / counts.sum(axis=1)
-    print(ratios)
+    counts, ratios = clorch.cluster_counts(clusters, labels)
 
+    # print("Cluster Breakdown:\n    ACH        GABA        mixed\n", ratios)
+    print("Cluster Breakdown:\n    "+(' '*5).join(label_strs)+'\n', ratios)
     if reduced.shape[1] > 2:
-        reduced = TSNE(
+        # also, reduce the cluster centres (TSNE must do all at once)
+        reduced_centres = TSNE(
             n_components=2, perplexity=75, learning_rate=400, n_iter=1000
-        ).fit_transform(reduced)
+        ).fit_transform(np.concatenate([reduced, centres], axis=0))
+        # split samples and centres
+        reduced = reduced_centres[:-centres.shape[0], :]
+        centres = reduced_centres[-centres.shape[0]:, :]
+        del reduced_centres
 
     fig, ax = plt.subplots(1, 2)
+
+    # plot samples in 2d coordinate space, coloured by their true label
     for label in np.unique(labels):
         grp = reduced[labels == label]
         ax[0].scatter(grp[:, 0], grp[:, 1], label=label_strs[label], alpha=.5)
+
+    # plot same samples, but coloured by their assigned cluster
     ax[1].scatter(reduced[:, 0], reduced[:, 1], c=clusters, alpha=.5)
 
-    plt.legend()
+    # plot cluster centres, with annotations stating what percentage of the
+    # total population of each label resides there
+    for (x, y), clstpop in zip(centres, ratios*100):
+        ax[1].scatter(x, y, c='red')
+        note = '\n'.join([
+            "%d%% of %s" % (pop, lbl) for lbl, pop in zip(label_strs, clstpop)
+        ])
+        ax[1].annotate(
+            note, (x, y), (10, 0), textcoords='offset pixels', c='red',
+            fontsize=13, weight='heavy'
+        )
+
+    ax[0].legend()
     plt.show()
 
     print("Viewing reconstructions...")
