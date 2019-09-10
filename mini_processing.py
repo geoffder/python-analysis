@@ -87,7 +87,7 @@ def grouped_mean_normalizer(minis):
     """
     all_abs_minis = np.abs(np.concatenate([v for v in minis.values()]))
     mean, var = np.mean(all_abs_minis), np.var(all_abs_minis)
-    return {k: (np.abs(v) - mean) / var for k, v in minis.items()}
+    return {k: np.abs(v - mean) / var for k, v in minis.items()}
 
 
 def detrend_minis(minis):
