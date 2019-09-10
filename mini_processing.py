@@ -3,6 +3,8 @@ import os
 import numpy as np
 import pandas as pd
 
+from scipy.signal import detrend
+
 
 def load_mini_csvs(pth, prefix):
     """
@@ -38,6 +40,14 @@ def self_max_normalizer(minis):
     """
     minis = {
         k: np.abs(v) / (np.abs(v).max(axis=1).reshape(-1, 1) + .00001)
+        for k, v in minis.items()
+    }
+    return minis
+
+
+def self_feature_scaling(minis):
+    minis = {
+        k: min_max_scaling(np.abs(v))
         for k, v in minis.items()
     }
     return minis
@@ -80,26 +90,47 @@ def grouped_mean_normalizer(minis):
     return {k: (np.abs(v) - mean) / var for k, v in minis.items()}
 
 
+def detrend_minis(minis):
+    return {k: detrend(v, axis=1) for k, v in minis.items()}
+
+
+def min_max_scaling(waves):
+    """Normalize on a 0 -> 1 scale, expects shape (N, T) numpy array"""
+    waves = waves - waves.min(axis=1, keepdims=True)
+    return waves / (waves.max(axis=1, keepdims=True) + .00001)
+
+
+def balance_groups(minis):
+    """
+    Takes a dict of shape (N, T) numpy arrays and replicates samples of the
+    smaller groups to roughly adjust for an imbalanced dataset.
+    """
+    N = np.max([recs.shape[0] for recs in minis.values()])
+    minis = {
+        k: np.concatenate([v]*(N//v.shape[0])) if N//v.shape[0] > 1 else v
+        for (k, v) in minis.items()
+    }
+    return minis
+
+
 def create_dataset(minis, balance=False):
     """
     Given a dict contaning arrays of processed minis, shape:(N, T), create a
     return a labelled dataset suitable for machine learning applications.
     """
     # balance the samples of each group in the dataset
-    if balance:
-        N = np.max([recs.shape[0] for recs in minis.values()])
-        minis = {
-            k: np.concatenate([v]*(N//v.shape[0])) if N//v.shape[0] > 1 else v
-            for (k, v) in minis.items()
-        }
+    minis = balance_groups(minis) if balance else minis
+
     # combine all recs into single array, and add singleton channel dimension
     miniset = np.concatenate([recs for recs in minis.values()])
     miniset = miniset.reshape(miniset.shape[0], 1, -1)
+
     # integer label array
     labels = np.concatenate([
         [i]*recs.shape[0]
         for (i, recs) in enumerate(minis.values())
     ])
+
     # lookup for integer label -> actual label
     label_strs = [k for k in minis.keys()]
 
@@ -114,7 +145,11 @@ def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
         trans: load_mini_csvs(pth, trans)
         # for trans in ['ACh', 'GABA']
         for trans in ['ACh', 'GABA', 'mixed']
+        # for trans in ['GABA', 'mixed']
     }
+
+    # remove linear trends in offset if they exist
+    minis = detrend_minis(minis)
 
     minis = clip_traces(minis, start, end)
 
@@ -124,8 +159,10 @@ def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
         minis = self_mean_normalizer(minis)
     elif norm == 'group_max':
         minis = grouped_max_normalizer(minis)
-    else:
+    elif norm == 'group_mean':
         minis = grouped_mean_normalizer(minis)
+    elif norm == 'feature':
+        minis = self_feature_scaling(minis)
 
     minis, labels, label_strs = create_dataset(minis)
 
@@ -140,6 +177,6 @@ if __name__ == '__main__':
         for trans in ['ACh', 'GABA', 'mixed']
     }
 
-    minis = self_normalizer(clip_traces(minis, 350, 702))
+    minis = grouped_mean_normalizer(clip_traces(minis, 350, 702))
 
     X, T, Tlabels = create_dataset(minis)
