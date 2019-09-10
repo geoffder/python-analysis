@@ -133,3 +133,99 @@ def ae_build_7():
         {'type': 'dense', 'in': 128, 'out': 12},
     ])
     return autoencoder
+
+
+def ae_build_8():
+    """Works with length 383"""
+    autoencoder = Conv1dDeepClusterer([
+        {
+            'type': 'conv', 'in': 1, 'out': 64, 'kernel': 5, 'stride': 4,
+            'dilation': 2
+        },
+        {
+            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 3, 'stride': 2,
+            'dilation': 2
+        },
+        {
+            'type': 'conv', 'in': 128, 'out': 256, 'kernel': 3, 'stride': 2,
+            'dilation': 1
+        },
+        {
+            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 3, 'stride': 2,
+            'dilation': 1
+        },
+        {
+            'type': 'conv', 'in': 128, 'out': 64, 'kernel': 3, 'stride': 2,
+            'dilation': 1
+        },
+        {
+            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 6, 'stride': 1,
+            'pad': 'valid'
+        },
+        {'type': 'squeeze'},
+        {'type': 'dense', 'in': 128, 'out': 12},
+    ])
+    return autoencoder
+
+
+def ae_build_9():
+    """Works with length 383"""
+    autoencoder = Conv1dDeepClusterer([
+        {
+            'type': 'conv', 'in': 1, 'out': 64, 'kernel': 11, 'stride': 4,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 128, 'out': 256, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 128, 'out': 64, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 6, 'stride': 1,
+            'pad': 'valid'
+        },
+        {'type': 'squeeze'},
+        {'type': 'dense', 'in': 128, 'out': 12},
+    ])
+    return autoencoder
+
+
+def ae_build_10():
+    """Works with length 383"""
+    autoencoder = Conv1dDeepClusterer([
+        {
+            'type': 'conv', 'in': 1, 'out': 64, 'kernel': 11, 'stride': 4,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 64, 'out': 128, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 128, 'out': 256, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 256, 'out': 128, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {
+            'type': 'conv', 'in': 128, 'out': 64, 'kernel': 5, 'stride': 2,
+            'dilation': 1, 'causal': True,
+        },
+        {'type': 'flatten'},
+        {'type': 'dense', 'in': 384, 'out': 128},
+        {'type': 'dense', 'in': 128, 'out': 12},
+    ])
+    return autoencoder
