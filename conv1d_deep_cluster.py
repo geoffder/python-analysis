@@ -9,7 +9,8 @@ from torch import nn
 from torch import optim
 import torch.nn.functional as F
 
-from mini_processing import get_minis_dataset
+from mini_processing import get_minis_dataset, min_max_scaling
+from temporal_convolution_1d import CausalConv1d
 import torch_clustering as clorch
 import cluster_ae_builds as builds
 
@@ -120,14 +121,25 @@ class Conv1dDeepClusterer(nn.Module):
         for p in self.params:
             if p['type'] == 'conv':
                 k = p.get('kernel', 3)
-                pad = k // 2 if p.get('pad', 'same') != 'valid' else 0
-                encoder_mods.append(
-                    nn.Conv1d(
-                        p['in'], p['out'], k, p.get('stride', 1), pad,
-                        p.get('dilation', 1), p.get('groups', 1),
-                        p.get('bias', False)
+                dil = p.get('dilation', 1)
+                pad = (k-1)*dil if p.get('pad', 'same') != 'valid' else 0
+
+                if p.get('causal', False):
+                    pad = pad // 2 if p.get('causal', False) else pad
+                    encoder_mods.append(
+                        nn.Conv1d(
+                            p['in'], p['out'], k, p.get('stride', 1), pad, dil,
+                            p.get('groups', 1), p.get('bias', False)
+                        )
                     )
-                )
+                else:
+                    encoder_mods.append(
+                        CausalConv1d(
+                            p['in'], p['out'], k, p.get('stride', 1), pad, dil,
+                            p.get('groups', 1), p.get('bias', False)
+                        )
+                    )
+
                 encoder_mods.append(p.get('activation', nn.Tanh)())
                 if 'pool' in p:
                     encoder_mods.append(make_pool1d_layer(p['pool']))
@@ -165,6 +177,21 @@ class Conv1dDeepClusterer(nn.Module):
                     X, layer.weight, None, layer.stride, layer.padding,
                     st_pad, layer.groups, layer.dilation
                 )
+            elif isinstance(layer, CausalConv1d):
+                if layer.conv.bias is not None:
+                    X = X + layer.bias.unsqueeze(1)
+
+                # No symmetrical padding in temporal dimension
+                padding = 0
+                st_pad = layer.conv.stride[0] // 2
+                X = F.conv_transpose1d(
+                    X, layer.conv.weight, None, layer.conv.stride, padding,
+                    st_pad, layer.conv.groups, layer.conv.dilation
+                )
+
+                # remove all implicit T padding from the end (therefore causal)
+                X = layer.chomp(X)
+
             elif isinstance(layer, nn.Linear):
                 X = F.linear(X, layer.weight.transpose(0, 1), layer.bias)
             elif isinstance(layer, nn.AvgPool1d):
@@ -173,9 +200,10 @@ class Conv1dDeepClusterer(nn.Module):
                 X = torch.unsqueeze(X, dim=2)
             elif isinstance(layer, Flatten):
                 # dirty hack to determine the correct C dimensionality
+                # [i-2] if one dense, [i-4] if two dense
                 X = X.view(
                     X.shape[0],
-                    list(self.encoder_net.children())[i-2].weight.shape[0],
+                    list(self.encoder_net.children())[i-4].weight.shape[0],
                     -1
                 )
             # elif not isinstance(layer, nn.BatchNorm1d):
@@ -297,18 +325,17 @@ if __name__ == '__main__':
     print("Loading data...")
     length = 383
     minis, labels, label_strs = get_minis_dataset(
-        # datapath, start=370, end=490, norm='self_max'
-        # datapath, start=350, end=702, norm='group_mean'
         datapath, start=350, end=350+length, norm='group_mean'
+        # datapath, start=350, end=350+length, norm='feature'
     )
 
     print("Building network...")
-    autoencoder = builds.ae_build_5()
+    autoencoder = builds.ae_build_9()
 
     print("Fitting model...")
     autoencoder.fit(
         minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
-        # minis, 2, lr=1e-3, epochs=75, cluster_alpha=1.6, clust_mode='KLdiv',
+        # minis, 4, lr=1e-3, epochs=75, cluster_alpha=.8, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1e-5, clust_mode='Km',
         show_plot=False
@@ -320,10 +347,9 @@ if __name__ == '__main__':
     # Cluster reduced data, and calculate how labels are divided between the
     # obtained clusters.
     centres, clusters, _ = clorch.hard_kmeans(torch.from_numpy(reduced), 3)
-    clusters = clusters.cpu().numpy()
+    centres, clusters = centres.cpu().numpy(), clusters.cpu().numpy()
     counts, ratios = clorch.cluster_counts(clusters, labels)
 
-    # print("Cluster Breakdown:\n    ACH        GABA        mixed\n", ratios)
     print("Cluster Breakdown:\n    "+(' '*5).join(label_strs)+'\n', ratios)
     if reduced.shape[1] > 2:
         # also, reduce the cluster centres (TSNE must do all at once)
@@ -347,17 +373,36 @@ if __name__ == '__main__':
 
     # plot cluster centres, with annotations stating what percentage of the
     # total population of each label resides there
-    for (x, y), clstpop in zip(centres, ratios*100):
-        ax[1].scatter(x, y, c='red')
+    for (cx, cy), clstpop in zip(centres, ratios*100):
+        ax[1].scatter(cx, cy, c='red')
         note = '\n'.join([
             "%d%% of %s" % (pop, lbl) for lbl, pop in zip(label_strs, clstpop)
         ])
         ax[1].annotate(
-            note, (x, y), (10, 0), textcoords='offset pixels', c='red',
+            note, (cx, cy), (10, 0), textcoords='offset pixels', c='red',
             fontsize=13, weight='heavy'
         )
 
     ax[0].legend()
+    plt.show()
+
+    # calculate average of minis grouped by their assigned clusters
+    proto_events = np.concatenate([
+        np.mean(minis[clusters == i], axis=0)
+        for i in np.unique(clusters)
+    ], axis=0)
+
+    # normalize to mean=0, var=1
+    proto_norms = (
+        proto_events - proto_events.mean(axis=1, keepdims=True)
+    ) / proto_events.std(axis=1, keepdims=True)
+
+    # normalize on a 0 -> 1 scale (feature scaling)
+    proto_stretch = min_max_scaling(proto_events)
+
+    fig1, ax1 = plt.subplots(2, 1)
+    ax1[0].plot(proto_events.T)
+    ax1[1].plot(proto_stretch.T)
     plt.show()
 
     print("Viewing reconstructions...")
