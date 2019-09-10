@@ -30,6 +30,26 @@ class Bite1d(nn.Module):
         return X[:, :, self.bite_size:].contiguous()
 
 
+class CausalConv1d(nn.Module):
+    """
+    Simple bundling of a conv layer and a chomp layer to achieve basic causal
+    convolution with none of the frills included in the Temporal CNN
+    implementation.
+    """
+    def __init__(self, in_channels, out_channels, kernel_size, stride,
+                 padding, dilation, groups=1, bias=True):
+        super(CausalConv1d, self).__init__()
+
+        self.conv = nn.Conv1d(
+            in_channels, out_channels, kernel_size, stride=stride,
+            padding=padding, dilation=dilation, groups=groups, bias=bias
+        )
+        self.chomp = Chomp1d(padding)
+
+    def forward(self, X):
+        return self.chomp(self.conv(X))
+
+
 class TemporalBlock1d(nn.Module):
     """
     Pair of weight normalized causal (in time) 1d convolutional layers with
