@@ -203,7 +203,7 @@ class Conv1dDeepClusterer(nn.Module):
                 # [i-2] if one dense, [i-4] if two dense
                 X = X.view(
                     X.shape[0],
-                    list(self.encoder_net.children())[i-4].weight.shape[0],
+                    list(self.encoder_net.children())[i-2].weight.shape[0],
                     -1
                 )
             # elif not isinstance(layer, nn.BatchNorm1d):

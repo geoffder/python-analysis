@@ -87,7 +87,7 @@ def grouped_mean_normalizer(minis):
     """
     all_abs_minis = np.abs(np.concatenate([v for v in minis.values()]))
     mean, var = np.mean(all_abs_minis), np.var(all_abs_minis)
-    return {k: np.abs(v - mean) / var for k, v in minis.items()}
+    return {k: (np.abs(v) - mean) / var for k, v in minis.items()}
 
 
 def detrend_minis(minis):
@@ -168,6 +168,20 @@ def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
 
     return minis, labels, label_strs
 
+
+def paramaterize(minis):
+    """
+    Reduce minis to a small feature vector. Peak, Area, and Peak/Area.
+    """
+    metrics = {
+        k: np.stack([
+            np.abs(v).max(axis=1),
+            np.abs(v.sum(axis=1)),
+            np.abs(v).max(axis=1) / np.abs(v.sum(axis=1)),
+        ], axis=1)
+        for k, v in minis.items()
+    }
+    return metrics
 
 if __name__ == '__main__':
     datapath = "/media/geoff/Data/ss_minis/"
