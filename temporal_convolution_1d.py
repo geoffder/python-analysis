@@ -40,10 +40,10 @@ class CausalConv1d(nn.Module):
                  padding, dilation, groups=1, bias=True):
         super(CausalConv1d, self).__init__()
 
-        self.conv = nn.Conv1d(
+        self.conv = weight_norm(nn.Conv1d(
             in_channels, out_channels, kernel_size, stride=stride,
             padding=padding, dilation=dilation, groups=groups, bias=bias
-        )
+        ))
         self.chomp = Chomp1d(padding)
 
     def forward(self, X):
