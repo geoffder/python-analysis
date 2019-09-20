@@ -56,6 +56,11 @@ class ClusterLossKm(nn.Module):
         decoder_loss = F.mse_loss(X, decoding)
         if self.alpha > 0:
             _, _, cluster_loss = clorch.soft_kmeans(encoding, self.K)
+            # _, probs, _ = clorch.soft_kmeans(encoding, self.K)
+            # cluster_loss = F.kl_div(
+            #     probs.log(), clorch.target_distribution(probs).detach(),
+            #     reduction='batchmean'
+            # )
         else:
             cluster_loss = 0
         return decoder_loss + (self.alpha * cluster_loss / X.shape[0])
@@ -334,10 +339,12 @@ if __name__ == '__main__':
 
     print("Fitting model...")
     autoencoder.fit(
-        minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
+        minis, 3, lr=1e-3, epochs=75, cluster_alpha=.01, clust_mode='KLdiv',
+        # minis, 3, lr=1e-3, epochs=75, cluster_alpha=.25, clust_mode='KLdiv',
+        # minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
         # minis, 4, lr=1e-3, epochs=75, cluster_alpha=.8, clust_mode='KLdiv',
-        # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1.5, clust_mode='KLdiv',
-        # minis, 2, lr=1e-4, epochs=75, cluster_alpha=1e-5, clust_mode='Km',
+        # minis, 2, lr=1e-4, epochs=75, cluster_alpha=.1, clust_mode='KLdiv',
+        # minis, 3, lr=1e-3, epochs=75, cluster_alpha=2, clust_mode='Km',
         show_plot=False
     )
 
