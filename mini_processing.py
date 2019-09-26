@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from scipy.signal import detrend
+from scipy.optimize import curve_fit
 
 
 def load_mini_csvs(pth, prefix):
@@ -169,19 +170,78 @@ def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
     return minis, labels, label_strs
 
 
-def paramaterize(minis):
+def expfun(X, y0, tau, bias):
+    """Calculate Y values of exponential given X and parameters."""
+    return y0 * np.exp((-1/tau) * X) + bias
+
+
+def get_exp_fits(mini, peak_time):
     """
-    Reduce minis to a small feature vector. Peak, Area, and Peak/Area.
+    Split waves based on position of peak (in pts), and calculates
+    exponential fit parameters for the rise and decay portions of the
+    event. Returns parameters (y0, tau, bias) for the rise and decay in
+    a flat list.
     """
-    metrics = {
-        k: np.stack([
-            np.abs(v).max(axis=1),
-            np.abs(v.sum(axis=1)),
-            np.abs(v).max(axis=1) / np.abs(v.sum(axis=1)),
-        ], axis=1)
-        for k, v in minis.items()
-    }
-    return metrics
+    head_y = np.flip(mini[:peak_time])
+    tail_y = mini[peak_time-1:]
+
+    head_x = np.arange(head_y.shape[0])
+    tail_x = np.arange(tail_y.shape[0])
+
+    (h_y0, h_tau, h_b), _ = curve_fit(expfun, head_x, head_y)
+    (t_y0, t_tau, t_b), _ = curve_fit(expfun, tail_x, tail_y)
+
+    return [h_y0, h_tau, h_b, t_y0, t_tau, t_b]
+
+
+def moving_average(wave, kernel_sz=3):
+    """
+    Simple moving average of 1d wave with specifiable kernel size. Takes
+    and returns a 1d numpy array.
+    """
+    cumul = np.cumsum(wave, dtype=float)
+    cumul[kernel_sz:] = cumul[kernel_sz:] - cumul[:-kernel_sz]
+    return cumul[kernel_sz - 1:] / kernel_sz
+
+
+def get_rise_decay(wave, peak_time, kernel_sz=3):
+    """
+    Get number of points it takes for the given event to rise and decay
+    between 20% <-> 80% of the peak difference over baseline.
+    """
+    # smooth input waves, flip head -> rise is modelled as a decay
+    head_y = moving_average(np.flip(wave[:peak_time]), kernel_sz)
+    tail_y = moving_average(wave[peak_time-1:], kernel_sz)
+
+    baseline = head_y[:200].mean()
+    peak = head_y.max()
+
+    # values to measure the rise/decay time between
+    bottom_thr = (peak - baseline) * .2 + baseline
+    top_thr = (peak - baseline) * .8 + baseline
+
+    # get point before wave drops below top threshold
+    head_top = np.maximum(np.where(head_y < top_thr)[0][0] - 1, 0)
+    tail_top = np.maximum(
+        np.where(tail_y < top_thr)[0][0] if tail_y.max() > top_thr else 0,
+        0
+    )
+
+    # find number of points from the rise/decay "top" point til threshold
+    rise = np.where(head_y[head_top:] < bottom_thr)[0][0]
+    decay = np.where(tail_y[tail_top:] < bottom_thr)[0][0]
+
+    return [rise, decay]
+
+
+def norm_dimensions(matrix):
+    """
+    Expects table of metrics in the form of a shape (N, D) numpy array.
+    Each dimension is normalized to have mean=0 and var=1 over the population.
+    """
+    sub_mean = matrix - matrix.mean(axis=0)
+    return sub_mean / matrix.var(axis=0)
+
 
 if __name__ == '__main__':
     datapath = "/media/geoff/Data/ss_minis/"
