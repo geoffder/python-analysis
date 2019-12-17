@@ -325,25 +325,29 @@ if __name__ == '__main__':
     # change colours used for sequential plotting
     mpl.style.use('seaborn')
 
-    datapath = "/media/geoff/Data/ss_minis/"
+    # datapath = "/media/geoff/Data/ss_minis/"
+    datapath = "/media/geoff/Data/vj_minis/"
 
     print("Loading data...")
-    length = 383
+    length = 383  # ss -> 383
+    # prefixes = ["ACH", "GABA", "mixed"]
+    prefixes = ["GABA", "Gly", "GlyKO", "mixed"]
     minis, labels, label_strs = get_minis_dataset(
-        datapath, start=350, end=350+length, norm='group_mean'
-        # datapath, start=350, end=350+length, norm='feature'
+        datapath, prefixes, start=350, end=350+length, norm='group_mean'
+        # datapath, prefixes, start=350, end=350+length, norm='feature'
     )
 
     print("Building network...")
-    autoencoder = builds.ae_build_9()
+    autoencoder = builds.ae_build_9()  # last used ss ae_build_9()
 
     print("Fitting model...")
     autoencoder.fit(
-        minis, 3, lr=1e-3, epochs=75, cluster_alpha=.01, clust_mode='KLdiv',
+        # minis, 3, lr=1e-3, epochs=75, cluster_alpha=.01, clust_mode='KLdiv',
         # minis, 3, lr=1e-3, epochs=75, cluster_alpha=.25, clust_mode='KLdiv',
         # minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
         # minis, 4, lr=1e-3, epochs=75, cluster_alpha=.8, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=.1, clust_mode='KLdiv',
+        minis, 2, lr=1e-3, epochs=75, cluster_alpha=.05, clust_mode='KLdiv',
         # minis, 3, lr=1e-3, epochs=75, cluster_alpha=2, clust_mode='Km',
         show_plot=False
     )
@@ -353,7 +357,7 @@ if __name__ == '__main__':
 
     # Cluster reduced data, and calculate how labels are divided between the
     # obtained clusters.
-    centres, clusters, _ = clorch.hard_kmeans(torch.from_numpy(reduced), 3)
+    centres, clusters, _ = clorch.hard_kmeans(torch.from_numpy(reduced), 2)
     centres, clusters = centres.cpu().numpy(), clusters.cpu().numpy()
     counts, ratios = clorch.cluster_counts(clusters, labels)
 

@@ -7,14 +7,17 @@ from scipy.signal import detrend
 from scipy.optimize import curve_fit
 
 
-def load_mini_csvs(pth, prefix):
+def load_mini_csvs(pth, prefix, only=""):
+    """Loads all CSVs with the given prefix in the given folder `pth`. Traces
+    are returned as one numpy array of shape (N, T). Optional parameter `only`
+    is a string keyword used to select for files containing it. e.g. 'inward'
     """
-    Loads all CSVs with the given prefix in the given folder `pth`. Traces are
-    returned as one numpy array of shape (N, T).
-    """
+    # add underscore after prefix (prevents partial prefix matches)
+    prefix += "_"
+
     fnames = [
         f for f in os.listdir(pth)
-        if prefix in f and os.path.isfile(os.path.join(pth, f))
+        if prefix in f and only in f and os.path.isfile(os.path.join(pth, f))
     ]
 
     minis = np.nan_to_num(np.concatenate([
@@ -26,8 +29,7 @@ def load_mini_csvs(pth, prefix):
 
 
 def clip_traces(minis, start, end):
-    """
-    Default mini output from TaroTools has 40ms head, and 60ms tail, centred
+    """Default mini output from TaroTools has 40ms head, and 60ms tail, centred
     around the peak. Often, recordings are 10kHz -> 10 samples/ms.
     Note: Slicing is done by pts, not temporal scaling.
     """
@@ -35,8 +37,7 @@ def clip_traces(minis, start, end):
 
 
 def self_max_normalizer(minis):
-    """
-    Normalizes traces by their largest absolute value (so it works for inward
+    """Normalizes traces by their largest absolute value (so it works for inward
     and outward going currents). Expects numpy array of shape (N, T).
     """
     minis = {
@@ -55,8 +56,7 @@ def self_feature_scaling(minis):
 
 
 def self_mean_normalizer(minis):
-    """
-    Normalizes traces by their mean absolute value (so it works for inward
+    """Normalizes traces by their mean absolute value (so it works for inward
     and outward going currents) and variane. Expects numpy array of
     shape (N, T).
     """
@@ -71,8 +71,7 @@ def self_mean_normalizer(minis):
 
 
 def grouped_max_normalizer(minis):
-    """
-    Takes the absolute value of, then normalizes traces by the largest value
+    """Takes the absolute value of, then normalizes traces by the largest value
     across ALL recordings. Expects dict containing arrays of shape (N, T).
     """
     extremum = np.max(
@@ -82,8 +81,7 @@ def grouped_max_normalizer(minis):
 
 
 def grouped_mean_normalizer(minis):
-    """
-    Normalizes based on mean and variance of ALL minis across all groups
+    """Normalizes based on mean and variance of ALL minis across all groups
     (absolute valued so that inward and outward events are treated the same.)
     """
     all_abs_minis = np.abs(np.concatenate([v for v in minis.values()]))
@@ -102,8 +100,7 @@ def min_max_scaling(waves):
 
 
 def balance_groups(minis):
-    """
-    Takes a dict of shape (N, T) numpy arrays and replicates samples of the
+    """Takes a dict of shape (N, T) numpy arrays and replicates samples of the
     smaller groups to roughly adjust for an imbalanced dataset.
     """
     N = np.max([recs.shape[0] for recs in minis.values()])
@@ -115,8 +112,7 @@ def balance_groups(minis):
 
 
 def create_dataset(minis, balance=False):
-    """
-    Given a dict contaning arrays of processed minis, shape:(N, T), create a
+    """Given a dict contaning arrays of processed minis, shape:(N, T), create a
     return a labelled dataset suitable for machine learning applications.
     """
     # balance the samples of each group in the dataset
@@ -138,16 +134,19 @@ def create_dataset(minis, balance=False):
     return miniset, labels, label_strs
 
 
-def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
-    """
-    Load and process minis for autoencoder model.
-    """
+def get_minis_dataset(pth, prefixes, start=370, end=490, norm='self_max',
+                      join=[], only="", balance=False):
+    """Load and process minis for autoencoder model."""
     minis = {
-        trans: load_mini_csvs(pth, trans)
-        # for trans in ['ACh', 'GABA']
-        for trans in ['ACh', 'GABA', 'mixed']
-        # for trans in ['GABA', 'mixed']
+        trans: load_mini_csvs(pth, trans, only=only)
+        for trans in prefixes
     }
+
+    # join datasets corresponding to the prefixes given in parameter `join`
+    if len(join) > 1:
+        for i in range(1, len(join)):
+            minis[join[0]] = np.append(minis[join[0]], minis[join[i]], axis=0)
+            minis.pop(join[i])
 
     # remove linear trends in offset if they exist
     minis = detrend_minis(minis)
@@ -165,7 +164,7 @@ def get_minis_dataset(pth, start=370, end=490, norm='self_max'):
     elif norm == 'feature':
         minis = self_feature_scaling(minis)
 
-    minis, labels, label_strs = create_dataset(minis)
+    minis, labels, label_strs = create_dataset(minis, balance=balance)
 
     return minis, labels, label_strs
 
@@ -176,8 +175,7 @@ def expfun(X, y0, tau, bias):
 
 
 def get_exp_fits(mini, peak_time):
-    """
-    Split waves based on position of peak (in pts), and calculates
+    """Split waves based on position of peak (in pts), and calculates
     exponential fit parameters for the rise and decay portions of the
     event. Returns parameters (y0, tau, bias) for the rise and decay in
     a flat list.
@@ -195,8 +193,7 @@ def get_exp_fits(mini, peak_time):
 
 
 def moving_average(wave, kernel_sz=3):
-    """
-    Simple moving average of 1d wave with specifiable kernel size. Takes
+    """Simple moving average of 1d wave with specifiable kernel size. Takes
     and returns a 1d numpy array.
     """
     cumul = np.cumsum(wave, dtype=float)
@@ -205,8 +202,7 @@ def moving_average(wave, kernel_sz=3):
 
 
 def get_rise_decay(wave, peak_time, kernel_sz=3):
-    """
-    Get number of points it takes for the given event to rise and decay
+    """Get number of points it takes for the given event to rise and decay
     between 20% <-> 80% of the peak difference over baseline.
     """
     # smooth input waves, flip head -> rise is modelled as a decay
@@ -244,13 +240,14 @@ def norm_dimensions(matrix):
 
 
 if __name__ == '__main__':
-    datapath = "/media/geoff/Data/ss_minis/"
+    datapath = "/media/geoff/Data/vj_minis/"
 
     minis = {
         trans: load_mini_csvs(datapath, trans)
-        for trans in ['ACh', 'GABA', 'mixed']
+        # for trans in ['ACh', 'GABA', 'mixed']
+        for trans in ["GABA", "Gly", "GlyKO", "mixed"]
     }
 
-    minis = grouped_mean_normalizer(clip_traces(minis, 350, 702))
+    minis = grouped_mean_normalizer(clip_traces(minis, 350, 800))
 
     X, T, Tlabels = create_dataset(minis)
