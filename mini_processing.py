@@ -196,7 +196,9 @@ def moving_average(wave, kernel_sz=3):
     """Simple moving average of 1d wave with specifiable kernel size. Takes
     and returns a 1d numpy array.
     """
-    cumul = np.cumsum(wave, dtype=float)
+    pad = np.zeros((kernel_sz - 1)//2)
+    padded = np.concatenate([pad, wave, pad])
+    cumul = np.cumsum(padded, dtype=float)
     cumul[kernel_sz:] = cumul[kernel_sz:] - cumul[:-kernel_sz]
     return cumul[kernel_sz - 1:] / kernel_sz
 
