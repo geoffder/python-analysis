@@ -292,8 +292,9 @@ class Conv1dDeepClusterer(nn.Module):
             reduced = self.encode(X).cpu().numpy()
         return reduced
 
-    def reconstruct(self, X, batch_sz=5):
+    def reconstruct(self, X, batch_sz=5, dt=.1):
         self.eval()  # set the model to testing mode
+        xaxis = np.arange(X.shape[-1]) * dt
         for i in range(50):
             inds = np.random.randint(0, X.shape[0], batch_sz)
             samples = X[inds]
@@ -308,8 +309,8 @@ class Conv1dDeepClusterer(nn.Module):
             fig, axes = plt.subplots(batch_sz // n_cols, n_cols)
             for ax, sample, construct in zip(
                     axes.flatten(), samples, constructs):
-                ax.plot(np.squeeze(sample), label='sample')
-                ax.plot(np.squeeze(construct), label='construct')
+                ax.plot(xaxis, np.squeeze(sample), label='sample')
+                ax.plot(xaxis, np.squeeze(construct), label='construct')
             plt.legend()
             plt.show()
 
