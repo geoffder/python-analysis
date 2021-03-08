@@ -26,23 +26,21 @@ def calc_distances(X, centres):
     Returns distances of each sample from each cluster centre.
     Shapes :: X:(N, D), centres:(K, D) -> distances:(N, K)
     """
-    distances = torch.stack([
-        (X - centre.unsqueeze(0)).pow(2).sum(dim=1)
-        for centre in centres
-    ], dim=1)
+    distances = torch.stack(
+        [(X - centre.unsqueeze(0)).pow(2).sum(dim=1) for centre in centres], dim=1
+    )
     return distances
 
 
 def calc_dispersion(X, centres, cluster_probs):
-    dists = (centres-X.mean(dim=0)).pow(2).sum(dim=1)
+    dists = (centres - X.mean(dim=0)).pow(2).sum(dim=1)
     return dists @ cluster_probs.sum(dim=0).unsqueeze(1)
 
 
 def hard_cluster_index(X, clusters, centres):
     """Distance of samples from their assigned cluster centre."""
-    error = torch.cat([
-        X[clusters == i] - centre for i, centre in enumerate(centres)
-    ]).pow(2).sum()
+    error = torch.cat([X[clusters == i] - centre
+                       for i, centre in enumerate(centres)]).pow(2).sum()
     return error / X.shape[0]
 
 
@@ -62,7 +60,7 @@ def calinski(X, centres):
     probs = soft_assign_clusters(dists)  # experiment with squaring
     between = calc_dispersion(X, centres, probs)
     within = ((dists * probs).sum() / X.shape[0])
-    return -(between * (X.shape[0] - K)) / (within * (K - 1))
+    return (between * (X.shape[0] - K)) / (within * (K - 1))
 
 
 def hard_adjust_centres(X, clusters, K):
@@ -70,10 +68,7 @@ def hard_adjust_centres(X, clusters, K):
     Centres move to mean of current cluster assignments.
     Shapes :: X:(N, D), clusters:(N,) -> centres:(K, D)
     """
-    centres = torch.stack([
-        torch.mean(X[clusters == i], dim=0)
-        for i in range(K)
-    ], dim=0)
+    centres = torch.stack([torch.mean(X[clusters == i], dim=0) for i in range(K)], dim=0)
     return centres
 
 
@@ -82,7 +77,7 @@ def soft_adjust_centres(X, cluster_probs, K):
     Move centres, weighted by cluster assignment probabilities.
     Shapes :: X:(N, D), cluster_probs:(N, K) -> centres:(K, D)
     """
-    return (cluster_probs.t() @ X)/cluster_probs.sum(dim=0).unsqueeze(1)
+    return (cluster_probs.t() @ X) / cluster_probs.sum(dim=0).unsqueeze(1)
 
 
 def hard_assign_clusters(distances):
@@ -155,17 +150,19 @@ def soft_kmeans(X, K, min_delta=1e-9):
 
 
 def cluster_counts(clusters, labels):
-    counts = np.array([
-        [np.sum(labels[clusters == j] == i) for i in np.unique(labels)]
-        for j in np.unique(clusters)
-    ])
+    counts = np.array(
+        [
+            [np.sum(labels[clusters == j] == i) for i in np.unique(labels)]
+            for j in np.unique(clusters)
+        ]
+    )
 
     # percentage of each label (col) population located in each cluster (row)
     ratios = counts / counts.sum(axis=0)
     return counts, ratios
 
-class ClusterLayer(nn.Module):
 
+class ClusterLayer(nn.Module):
     def __init__(self, K, D):
         super(ClusterLayer, self).__init__()
         self.K = K
@@ -175,19 +172,16 @@ class ClusterLayer(nn.Module):
         self.to(self.dv)
 
     def build(self):
-        self.centres = nn.Parameter(
-            torch.randn(self.K, self.D)/np.sqrt(self.D)
-        )
+        self.centres = nn.Parameter(torch.randn(self.K, self.D) / np.sqrt(self.D))
 
     def forward(self, X):
-        distances = torch.stack([
-            (X - centre.unsqueeze(0)).pow(2).sum(dim=1)
-            for centre in self.centres
-        ], dim=1)
+        distances = torch.stack(
+            [(X - centre.unsqueeze(0)).pow(2).sum(dim=1) for centre in self.centres],
+            dim=1
+        )
         return distances
 
-    def fit(self, X, lr=1e-2, epochs=100, batch_sz=100, print_every=30,
-            show_plot=False):
+    def fit(self, X, lr=1e-2, epochs=100, batch_sz=100, print_every=30, show_plot=False):
 
         N = X.shape[0]
         # X = torch.from_numpy(X).float().to(self.dv)
@@ -201,7 +195,7 @@ class ClusterLayer(nn.Module):
             print("epoch:", i, "n_batches:", n_batches)
             X = X[torch.randperm(X.shape[0])]  # shuffle
             for j in range(n_batches):
-                Xbatch = X[j*batch_sz:(j*batch_sz+batch_sz)]
+                Xbatch = X[j * batch_sz:(j * batch_sz + batch_sz)]
 
                 cost = self.train_step(Xbatch)  # train
 
@@ -239,9 +233,7 @@ if __name__ == '__main__':
     dv = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # run k-means on toy data
-    data = torch.cat([
-        torch.randn(1000, 2) + i*10 for i in range(3)
-    ], dim=0).to(dv)
+    data = torch.cat([torch.randn(1000, 2) + i * 10 for i in range(3)], dim=0).to(dv)
     # centres, clusters, err = soft_kmeans(data, 3)
 
     data = (data - data.mean(dim=0)) / data.var(dim=0)

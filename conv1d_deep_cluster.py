@@ -45,22 +45,18 @@ class Squeezer(nn.Module):
 
 
 class ClusterLossKm(nn.Module):
-
     def __init__(self, K, D, alpha=1e-3):
         super(ClusterLossKm, self).__init__()
         self.K = K
         self.D = D
         self.alpha = alpha
 
-    def forward(self, X, encoding, decoding):
+    def forward(self, X, encoding, decoding, cluster_frac):
         decoder_loss = F.mse_loss(X, decoding)
         if self.alpha > 0:
             _, _, cluster_loss = clorch.soft_kmeans(encoding, self.K)
-            # _, probs, _ = clorch.soft_kmeans(encoding, self.K)
-            # cluster_loss = F.kl_div(
-            #     probs.log(), clorch.target_distribution(probs).detach(),
-            #     reduction='batchmean'
-            # )
+            cluster_loss *= cluster_frac
+            decoder_loss *= 1 - cluster_frac
         else:
             cluster_loss = 0
         return decoder_loss + (self.alpha * cluster_loss / X.shape[0])
@@ -72,9 +68,7 @@ class ClusterLossCal(nn.Module):
         self.K = K
         self.D = D
         self.alpha = alpha
-        self.centres = nn.Parameter(
-            torch.randn(self.K, self.D)/np.sqrt(self.D)
-        )
+        self.centres = nn.Parameter(torch.randn(self.K, self.D) / np.sqrt(self.D))
 
     def forward(self, X, encoding, decoding):
         decoder_loss = F.mse_loss(X, decoding)
@@ -91,29 +85,25 @@ class ClusterLossKLdiv(nn.Module):
         self.K = K
         self.D = D
         self.alpha = alpha
-        # self.centres = nn.Parameter(
-        #     torch.randn(self.K, self.D)/np.sqrt(self.D)
-        # )
-        self.centres = nn.Parameter(
-            nn.init.xavier_uniform_(torch.zeros(self.K, self.D))
-        )
+        self.centres = nn.Parameter(nn.init.xavier_uniform_(torch.zeros(self.K, self.D)))
 
-    def forward(self, X, encoding, decoding):
+    def forward(self, X, encoding, decoding, cluster_frac):
         decoder_loss = F.mse_loss(X, decoding)
         if self.alpha > 0:
+            decoder_loss *= 1 - cluster_frac
             dists = clorch.calc_distances(encoding, self.centres)
             probs = clorch.soft_assign_clusters(dists)
             cluster_loss = F.kl_div(
-                probs.log(), clorch.target_distribution(probs).detach(),
+                probs.log(),
+                clorch.target_distribution(probs).detach(),
                 reduction='batchmean'
-            )
+            ) * cluster_frac
         else:
             cluster_loss = 0
         return decoder_loss + cluster_loss * self.alpha
 
 
 class Conv1dDeepClusterer(nn.Module):
-
     def __init__(self, params):
         super(Conv1dDeepClusterer, self).__init__()
         self.params = params
@@ -127,7 +117,7 @@ class Conv1dDeepClusterer(nn.Module):
             if p['type'] == 'conv':
                 k = p.get('kernel', 3)
                 dil = p.get('dilation', 1)
-                pad = (k-1)*dil if p.get('pad', 'same') != 'valid' else 0
+                pad = (k - 1) * dil if p.get('pad', 'same') != 'valid' else 0
 
                 if p.get('causal', False):
                     pad = pad // 2 if p.get('causal', False) else pad
@@ -151,9 +141,7 @@ class Conv1dDeepClusterer(nn.Module):
             elif p['type'] == 'pool':
                 encoder_mods.append(make_pool1d_layer(p))
             elif p['type'] == 'dense':
-                encoder_mods.append(
-                    nn.Linear(p['in'], p['out'], p.get('bias', False))
-                )
+                encoder_mods.append(nn.Linear(p['in'], p['out'], p.get('bias', False)))
                 encoder_mods.append(p.get('activation', nn.Tanh)())
             elif p['type'] == 'squeeze':
                 encoder_mods.append(Squeezer())
@@ -179,8 +167,8 @@ class Conv1dDeepClusterer(nn.Module):
 
                 st_pad = layer.stride[0] // 2
                 X = F.conv_transpose1d(
-                    X, layer.weight, None, layer.stride, layer.padding,
-                    st_pad, layer.groups, layer.dilation
+                    X, layer.weight, None, layer.stride, layer.padding, st_pad,
+                    layer.groups, layer.dilation
                 )
             elif isinstance(layer, CausalConv1d):
                 if layer.conv.bias is not None:
@@ -190,8 +178,8 @@ class Conv1dDeepClusterer(nn.Module):
                 padding = 0
                 st_pad = layer.conv.stride[0] // 2
                 X = F.conv_transpose1d(
-                    X, layer.conv.weight, None, layer.conv.stride, padding,
-                    st_pad, layer.conv.groups, layer.conv.dilation
+                    X, layer.conv.weight, None, layer.conv.stride, padding, st_pad,
+                    layer.conv.groups, layer.conv.dilation
                 )
 
                 # remove all implicit T padding from the end (therefore causal)
@@ -208,8 +196,7 @@ class Conv1dDeepClusterer(nn.Module):
                 # [i-2] if one dense, [i-4] if two dense
                 X = X.view(
                     X.shape[0],
-                    list(self.encoder_net.children())[i-2].weight.shape[0],
-                    -1
+                    list(self.encoder_net.children())[i - 2].weight.shape[0], -1
                 )
             # elif not isinstance(layer, nn.BatchNorm1d):
             else:
@@ -220,8 +207,19 @@ class Conv1dDeepClusterer(nn.Module):
         Z = self.encode(X)
         return Z, self.decode(Z)
 
-    def fit(self, X, K, lr=1e-4, epochs=10, batch_sz=300, cluster_alpha=1e-8,
-            clust_mode='Km', print_every=30, show_plot=True):
+    def fit(
+        self,
+        X,
+        K,
+        lr=1e-4,
+        epochs=10,
+        batch_sz=300,
+        cluster_alpha=1e-8,
+        var_cluster_frac=False,
+        clust_mode='Km',
+        print_every=30,
+        show_plot=True
+    ):
 
         N = X.shape[0]
         D = list(self.encoder_net.children())[-2].weight.shape[0]
@@ -242,25 +240,31 @@ class Conv1dDeepClusterer(nn.Module):
             print("epoch:", i, "n_batches:", n_batches)
             X = X[torch.randperm(X.shape[0])]  # shuffle
             for j in range(n_batches):
-                Xbatch = X[j*batch_sz:(j*batch_sz+batch_sz)]
+                Xbatch = X[j * batch_sz:(j * batch_sz + batch_sz)]
 
-                cost = self.train_step(Xbatch)  # train
+                cluster_frac = .5 if not var_cluster_frac else i / epochs
+
+                cost = self.train_step(Xbatch, cluster_frac)  # train
 
                 if j % print_every == 0:
                     print("cost: %f" % (cost))
                     costs.append(cost)
 
         if show_plot:
-            plt.plot(costs)
-            plt.show()
+            cost_fig, cost_ax = plt.subplots(1)
+            cost_ax.plot(costs)
+            cost_ax.set_title("Training Cost")
+            return cost_fig
+        else:
+            return None
 
-    def train_step(self, inputs):
+    def train_step(self, inputs, cluster_frac):
         self.train()  # set the model to training mode
         self.optimizer.zero_grad()  # Reset gradient
 
         # Forward
         encoding, decoding = self.forward(inputs)
-        output = self.loss.forward(inputs, encoding, decoding)
+        output = self.loss.forward(inputs, encoding, decoding, cluster_frac)
 
         # Backward
         output.backward()
@@ -307,8 +311,7 @@ class Conv1dDeepClusterer(nn.Module):
 
             n_cols = batch_sz // 5
             fig, axes = plt.subplots(batch_sz // n_cols, n_cols)
-            for ax, sample, construct in zip(
-                    axes.flatten(), samples, constructs):
+            for ax, sample, construct in zip(axes.flatten(), samples, constructs):
                 ax.plot(xaxis, np.squeeze(sample), label='sample')
                 ax.plot(xaxis, np.squeeze(construct), label='construct')
             plt.legend()
@@ -334,7 +337,11 @@ if __name__ == '__main__':
     # prefixes = ["ACH", "GABA", "mixed"]
     prefixes = ["GABA", "Gly", "GlyKO", "mixed"]
     minis, labels, label_strs = get_minis_dataset(
-        datapath, prefixes, start=350, end=350+length, norm='group_mean'
+        datapath,
+        prefixes,
+        start=350,
+        end=350 + length,
+        norm='group_mean'
         # datapath, prefixes, start=350, end=350+length, norm='feature'
     )
 
@@ -348,7 +355,12 @@ if __name__ == '__main__':
         # minis, 3, lr=1e-3, epochs=75, cluster_alpha=1.2, clust_mode='KLdiv',
         # minis, 4, lr=1e-3, epochs=75, cluster_alpha=.8, clust_mode='KLdiv',
         # minis, 2, lr=1e-4, epochs=75, cluster_alpha=.1, clust_mode='KLdiv',
-        minis, 2, lr=1e-3, epochs=75, cluster_alpha=.05, clust_mode='KLdiv',
+        minis,
+        2,
+        lr=1e-3,
+        epochs=75,
+        cluster_alpha=.05,
+        clust_mode='KLdiv',
         # minis, 3, lr=1e-3, epochs=75, cluster_alpha=2, clust_mode='Km',
         show_plot=False
     )
@@ -362,7 +374,7 @@ if __name__ == '__main__':
     centres, clusters = centres.cpu().numpy(), clusters.cpu().numpy()
     counts, ratios = clorch.cluster_counts(clusters, labels)
 
-    print("Cluster Breakdown:\n    "+(' '*5).join(label_strs)+'\n', ratios)
+    print("Cluster Breakdown:\n    " + (' ' * 5).join(label_strs) + '\n', ratios)
     if reduced.shape[1] > 2:
         # also, reduce the cluster centres (TSNE must do all at once)
         reduced_centres = TSNE(
@@ -385,29 +397,30 @@ if __name__ == '__main__':
 
     # plot cluster centres, with annotations stating what percentage of the
     # total population of each label resides there
-    for (cx, cy), clstpop in zip(centres, ratios*100):
+    for (cx, cy), clstpop in zip(centres, ratios * 100):
         ax[1].scatter(cx, cy, c='red')
-        note = '\n'.join([
-            "%d%% of %s" % (pop, lbl) for lbl, pop in zip(label_strs, clstpop)
-        ])
+        note = '\n'.join(
+            ["%d%% of %s" % (pop, lbl) for lbl, pop in zip(label_strs, clstpop)]
+        )
         ax[1].annotate(
-            note, (cx, cy), (10, 0), textcoords='offset pixels', c='red',
-            fontsize=13, weight='heavy'
+            note, (cx, cy), (10, 0),
+            textcoords='offset pixels',
+            c='red',
+            fontsize=13,
+            weight='heavy'
         )
 
     ax[0].legend()
     plt.show()
 
     # calculate average of minis grouped by their assigned clusters
-    proto_events = np.concatenate([
-        np.mean(minis[clusters == i], axis=0)
-        for i in np.unique(clusters)
-    ], axis=0)
+    proto_events = np.concatenate(
+        [np.mean(minis[clusters == i], axis=0) for i in np.unique(clusters)], axis=0
+    )
 
     # normalize to mean=0, var=1
-    proto_norms = (
-        proto_events - proto_events.mean(axis=1, keepdims=True)
-    ) / proto_events.std(axis=1, keepdims=True)
+    proto_norms = (proto_events - proto_events.mean(axis=1, keepdims=True)
+                  ) / proto_events.std(axis=1, keepdims=True)
 
     # normalize on a 0 -> 1 scale (feature scaling)
     proto_stretch = min_max_scaling(proto_events)
